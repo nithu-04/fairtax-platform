@@ -1,7 +1,16 @@
 const API = "https://fairtax-backend.onrender.com/api";
 
 let currentStep = 1;
-const TOTAL = 7;
+let TOTAL = 7; // Default for regular filing, will be updated to 8 for free filing
+
+function setTotalSteps() {
+  const filingTypeEl = document.querySelector('input[name="filing_type"]');
+  if (filingTypeEl && filingTypeEl.value === 'free') {
+    TOTAL = 8; // Free filing: Step 1=Referrals, Step 2=Personal Details, Step 3-8=Regular flow
+  } else {
+    TOTAL = 7; // Regular filing: Step 1-7
+  }
+}
 
 // ❗ REPLACED phone with submission_id
 let submissionId = localStorage.getItem("submission_id") || "";
@@ -49,6 +58,42 @@ function celebrateUnlock(message, emoji) {
   }, 2000);
 }
 
+// ─── FORM VALIDATION FUNCTIONS ──────────────────────────────────────────
+function validateName(input) {
+  const nameRegex = /^[A-Za-z\s]+$/;
+  const error = document.getElementById('name-error');
+  const isValid = nameRegex.test(input.value) || !input.value;
+  if (error) error.style.display = isValid ? 'none' : 'block';
+  input.classList.toggle('input-error', !isValid);
+  return isValid;
+}
+
+function validatePhone(input) {
+  const phoneRegex = /^\d{10}$/;
+  const errorId = input.id === 'phone-input' ? 'phone-error' :
+                  input.name === 'referrer_phone' ? 'referrer-phone-error' :
+                  `phone-error-${input.name.match(/\d+/)?.[0] || ''}`;
+  const error = document.getElementById(errorId);
+  const isValid = phoneRegex.test(input.value) || !input.value;
+  if (error) error.style.display = isValid ? 'none' : 'block';
+  input.classList.toggle('input-error', !isValid);
+  return isValid;
+}
+
+function validateReferralName(input) {
+  const nameRegex = /^[A-Za-z\s]+$/;
+  const isValid = nameRegex.test(input.value) || !input.value;
+  input.classList.toggle('input-error', !isValid);
+  return isValid;
+}
+
+function validateReferralPhone(input) {
+  const phoneRegex = /^\d{10}$/;
+  const isValid = phoneRegex.test(input.value) || !input.value;
+  input.classList.toggle('input-error', !isValid);
+  return isValid;
+}
+
 function checkReferralsComplete() {
   let count = 0;
   for (let i = 1; i <= 5; i++) {
@@ -71,6 +116,14 @@ function updateReferralTeaser() {
 
   if (referralsNeedEl) referralsNeedEl.textContent = remaining;
   if (statusEl) statusEl.textContent = status;
+
+  // ✨ NEW: Update localStorage for floating sidebar widget
+  localStorage.setItem('referral_count', refs);
+
+  // ✨ NEW: Update floating widget if it exists
+  if (typeof updateReferralWidget === 'function') {
+    updateReferralWidget();
+  }
 
   // Show celebration if just unlocked
   if (remaining === 0 && refs === 5) {
@@ -127,6 +180,53 @@ function initScrollAnimations() {
   });
 }
 
+// ─── BREADCRUMB NAVIGATION ─────────────────────────────────────────────────────
+function updateBreadcrumbs(currentStep) {
+  // Update breadcrumb active/disabled states
+  $$(".breadcrumb-step").forEach(btn => {
+    const stepNum = parseInt(btn.dataset.step);
+    btn.classList.remove("active", "disabled");
+
+    if (stepNum === currentStep) {
+      btn.classList.add("active");
+    } else if (stepNum > currentStep) {
+      btn.classList.add("disabled");
+    }
+  });
+}
+
+function initBreadcrumbListeners() {
+  // Home link
+  const homeLink = $(".breadcrumb-home");
+  if (homeLink) {
+    homeLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      // Navigate to choice page
+      window.location.href = "choice.html";
+    });
+  }
+
+  // Step buttons
+  $$(".breadcrumb-step").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const targetStep = parseInt(btn.dataset.step);
+
+      // Only allow navigation to current step or previous steps
+      if (targetStep <= currentStep) {
+        // Validate current step before navigating away
+        if (!validateStep(currentStep)) {
+          return;
+        }
+        currentStep = targetStep;
+        showStep(currentStep);
+        // Scroll form into view
+        $("form").scrollIntoView({ behavior: "smooth" });
+      }
+    });
+  });
+}
+
 function showStep(n) {
   $$(".step").forEach(s => s.classList.remove("active"));
   $(`.step[data-step="${n}"]`).classList.add("active");
@@ -137,6 +237,9 @@ function showStep(n) {
     $("#bar").style.width = "100%";
     $("#stepLabel").textContent = `Submitted`;
   }
+
+  // Update breadcrumb navigation
+  updateBreadcrumbs(n);
 
   // Navigation visibility rules:
   // - Prev: visible on steps 2..(TOTAL-1) (hide on thank-you step)
@@ -255,6 +358,20 @@ let filingType = 'regular';  // Pre-set to regular filing on index.html
 let referralCode = localStorage.getItem('referral_code') || '';
 let cameraStream = null;
 let cameraTargetInput = null;
+
+// ─── REFERRAL CODE GENERATION ──────────────────────────────────────────
+function generateReferralCode(userName) {
+  // Format: <FIRST_3_LETTERS_OF_NAME>_FAIRTAX<2_RANDOM_DIGITS>
+  const namePart = (userName || 'USER').toUpperCase().replace(/\s/g, '').slice(0, 5);
+  const randomPart = String(Math.floor(Math.random() * 90) + 10); // 10-99
+  return `${namePart}_FAIRTAX${randomPart}`;
+}
+
+function validateReferralCodeFormat(code) {
+  // Check if code matches pattern: <NAME>_FAIRTAX<XX>
+  const pattern = /^[A-Z]+_FAIRTAX\d{2}$/;
+  return pattern.test(code);
+}
 async function uploadDocs(inputId, docType) {
   const input = $(`#${inputId}`);
   if (!input || !input.files.length) return;
@@ -809,6 +926,33 @@ $("#submit").onclick = async () => {
     Object.assign(all, collectStep(i));
   }
 
+  // Show loading overlay
+  const loadingOverlay = document.createElement('div');
+  loadingOverlay.id = 'submission-loading';
+  loadingOverlay.style.cssText = `
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    backdrop-filter: blur(4px);
+  `;
+  loadingOverlay.innerHTML = `
+    <div style="background:#fff;border-radius:20px;padding:40px;text-align:center;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+      <div style="font-size:48px;margin-bottom:16px;animation:spin 2s linear infinite">⚙️</div>
+      <h3 style="font-size:24px;font-weight:900;color:#0B2545;margin:0 0 12px">Processing Your Filing...</h3>
+      <p style="font-size:16px;color:#64748b;margin:0;line-height:1.6">Our AI is extracting data and our expert team is reviewing your details. This usually takes 5-30 seconds.</p>
+      <div style="margin-top:24px;display:flex;gap:8px;justify-content:center">
+        <div style="width:8px;height:8px;border-radius:50%;background:#059669;animation:pulse 1.4s infinite"></div>
+        <div style="width:8px;height:8px;border-radius:50%;background:#059669;animation:pulse 1.4s infinite 0.2s"></div>
+        <div style="width:8px;height:8px;border-radius:50%;background:#059669;animation:pulse 1.4s infinite 0.4s"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(loadingOverlay);
+
   $("#submit").textContent = "Submitting...";
   $("#submit").disabled = true;
 
@@ -822,10 +966,21 @@ $("#submit").onclick = async () => {
     const j = await r.json();
 
     if (j.success) {
-      // Store referral code for wallet and referral pages
-      const refCode = j.referral_code || '—';
-      localStorage.setItem('referral_code', refCode);
+      // Remove loading overlay
+      loadingOverlay.remove();
 
+      // Store referral code for wallet and referral pages
+      let refCode = j.referral_code || '—';
+
+      // If backend didn't provide a code or code is in wrong format, generate one locally
+      if (!refCode || refCode === '—' || !validateReferralCodeFormat(refCode)) {
+        const userName = document.querySelector('[name="name"]')?.value ||
+                        document.querySelector('[name="referrer_name"]')?.value ||
+                        'USER';
+        refCode = generateReferralCode(userName);
+      }
+
+      localStorage.setItem('referral_code', refCode);
       $("#refCode").textContent = refCode;
 
       // Calculate and display refund options
@@ -837,10 +992,12 @@ $("#submit").onclick = async () => {
       currentStep = 7;
       showStep(7);
     } else {
+      loadingOverlay.remove();
       alert("Error: " + j.error);
     }
 
   } catch (e) {
+    loadingOverlay.remove();
     alert("Network error: " + e.message);
   }
 
@@ -1134,8 +1291,64 @@ document.getElementById('referralsList')?.addEventListener('input', updateReveal
 
 // ensure tracker initializes on page load in case fields are pre-filled
 window.addEventListener('DOMContentLoaded', () => {
+  setTotalSteps(); // Set correct total based on filing type (7 for regular, 8 for free)
   updateMilestoneTracker();
   updateRevealCodeButton();
+  initBreadcrumbListeners();
+
+  // Add validation listeners to form inputs
+  const nameInput = document.querySelector('input[name="name"]');
+  const phoneInput = document.querySelector('input[name="phone"]');
+  const referrerNameInput = document.querySelector('input[name="referrer_name"]');
+  const referrerPhoneInput = document.querySelector('input[name="referrer_phone"]');
+
+  if (nameInput) {
+    nameInput.addEventListener('input', (e) => validateName(e.target));
+    nameInput.addEventListener('blur', (e) => validateName(e.target));
+  }
+  if (phoneInput) {
+    phoneInput.addEventListener('input', (e) => {
+      e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+      validatePhone(e.target);
+    });
+    phoneInput.addEventListener('blur', (e) => validatePhone(e.target));
+  }
+  if (referrerNameInput) {
+    referrerNameInput.addEventListener('input', (e) => validateReferralName(e.target));
+    referrerNameInput.addEventListener('blur', (e) => validateReferralName(e.target));
+  }
+  if (referrerPhoneInput) {
+    referrerPhoneInput.addEventListener('input', (e) => {
+      e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+      validateReferralPhone(e.target);
+    });
+    referrerPhoneInput.addEventListener('blur', (e) => validateReferralPhone(e.target));
+  }
+
+  // Add validation to referral input fields (5 referrals)
+  for (let i = 1; i <= 5; i++) {
+    const refName = document.querySelector(`input[name="ref_name_${i}"]`);
+    const refPhone = document.querySelector(`input[name="ref_phone_${i}"]`);
+
+    if (refName) {
+      refName.addEventListener('input', (e) => {
+        validateReferralName(e.target);
+        // ✨ Update floating widget on referral input
+        updateReferralTeaser();
+      });
+      refName.addEventListener('blur', (e) => validateReferralName(e.target));
+    }
+    if (refPhone) {
+      refPhone.addEventListener('input', (e) => {
+        e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+        validateReferralPhone(e.target);
+        updateMilestoneTracker();
+        // ✨ Update floating widget on referral input
+        updateReferralTeaser();
+      });
+      refPhone.addEventListener('blur', (e) => validateReferralPhone(e.target));
+    }
+  }
 });
 
 // ── STRUCTURED PROOF SECTION HELPERS ────────────────────────────────────
@@ -1506,10 +1719,16 @@ function initPremiumEffects() {
 
   // Monitor referral changes
   $$('[name^="ref_name_"], [name^="ref_phone_"]').forEach(field => {
-    field.addEventListener('change', updateReferralTeaser);
+    field.addEventListener('change', () => {
+      updateReferralTeaser();
+      updateMilestoneDisplay();
+    });
     field.addEventListener('input', () => {
       // Trigger milestone update on input
-      setTimeout(updateReferralTeaser, 300);
+      setTimeout(() => {
+        updateReferralTeaser();
+        updateMilestoneDisplay();
+      }, 300);
     });
   });
 }
@@ -1540,6 +1759,59 @@ if (document.readyState === 'loading') {
     console.warn('start param handling failed', e);
   }
 })();
+
+// Milestone tracking for referral gamification
+function updateMilestoneDisplay() {
+  const tracker = document.getElementById('milestoneTracker');
+  if (!tracker) return; // Only on referral-filing.html
+
+  const count = countCompleteReferrals();
+  const countEl = document.getElementById('milestoneCount');
+  const msgEl = document.getElementById('milestoneMessage');
+
+  if (count === 0) {
+    tracker.style.display = 'none';
+    return;
+  }
+
+  // Show tracker
+  tracker.style.display = 'block';
+  countEl.textContent = count;
+
+  // Update message and styling based on milestone
+  let message = '';
+  let bgColor = 'linear-gradient(135deg,#f0fdf4,#ecfdf5)';
+  let borderColor = '#10b981';
+
+  if (count === 1) {
+    message = '✅ Congratulations! Unlocked ₹250 cashback.<br>Add 2 more for ₹1,000 cashback!';
+  } else if (count === 2) {
+    message = '⏳ Almost there! Add 1 more referral for ₹1,000 cashback.';
+  } else if (count === 3) {
+    message = '🎉 Congratulations! Unlocked ₹1,000 cashback.<br>Add 2 more for ₹5,000 + FREE filing!';
+  } else if (count === 4) {
+    message = '⏳ So close! Add 1 more referral to unlock FREE filing!';
+  } else if (count >= 5) {
+    message = '🌟 SURPRISE! Your filing is absolutely FREE + ₹5,000 cashback!<br>You\'re the 6th person — congratulations!';
+    bgColor = 'linear-gradient(135deg,#fef3c7,#fef08a)';
+    borderColor = '#fbbf24';
+  }
+
+  // Trigger celebration animation on milestone hit
+  if ([1, 3, 5].includes(count) && !tracker.classList.contains('just-celebrated')) {
+    tracker.classList.add('milestone-celebrate');
+    tracker.classList.add('just-celebrated');
+    setTimeout(() => {
+      tracker.classList.remove('milestone-celebrate');
+      setTimeout(() => tracker.classList.remove('just-celebrated'), 100);
+    }, 2000);
+  }
+
+  tracker.style.background = bgColor;
+  tracker.style.borderColor = borderColor;
+  msgEl.innerHTML = message;
+}
+
 // Adjust page spacing so sticky header/nav do not cover content when scrolling
 function updateHeaderSpacing() {
   try {

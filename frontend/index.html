@@ -12,7 +12,7 @@
   <a class="banner-link" href="proofs.html">Free file eligibility — Check now</a>
 </div>
 <div class="top-banner blink-green">
-  <span>Referral offer — payouts released Thursdays, 3:30 PM</span>
+  <span>Grab your Referral Offer — Referral payout released every Thursday 3:30 PM</span>
 </div>
 <div class="help-bar">
   At any point of time, for your assistance — this is to avoid any inconvenience. Contact us on WhatsApp.
@@ -23,6 +23,26 @@
 <main>
   <div class="progress"><div id="bar"></div></div>
   <div class="step-label" id="stepLabel">Step 1 of 7</div>
+
+  <!-- BREADCRUMB NAVIGATION -->
+  <nav class="breadcrumb-nav">
+    <a href="#" class="breadcrumb-item breadcrumb-home" data-step="0">🏠 Home</a>
+    <span class="breadcrumb-separator">›</span>
+    <button type="button" class="breadcrumb-item breadcrumb-step active" data-step="1">Step 1</button>
+    <span class="breadcrumb-separator">›</span>
+    <button type="button" class="breadcrumb-item breadcrumb-step disabled" data-step="2">Step 2</button>
+    <span class="breadcrumb-separator">›</span>
+    <button type="button" class="breadcrumb-item breadcrumb-step disabled" data-step="3">Step 3</button>
+    <span class="breadcrumb-separator">›</span>
+    <button type="button" class="breadcrumb-item breadcrumb-step disabled" data-step="4">Step 4</button>
+    <span class="breadcrumb-separator">›</span>
+    <button type="button" class="breadcrumb-item breadcrumb-step disabled" data-step="5">Step 5</button>
+    <span class="breadcrumb-separator">›</span>
+    <button type="button" class="breadcrumb-item breadcrumb-step disabled" data-step="6">Step 6</button>
+    <span class="breadcrumb-separator">›</span>
+    <button type="button" class="breadcrumb-item breadcrumb-step disabled" data-step="7">Step 7</button>
+  </nav>
+
   <form id="taxForm">
     <!-- STEP 1 — Basic Info (Regular Tax Only) -->
     <section class="step active" data-step="1">
@@ -33,10 +53,16 @@
         <div class="user-details">
           <h3 style="margin-bottom:14px">Your Personal Details</h3>
           <div class="grid">
-            <label>Full Name <input name="name" placeholder="Your full name" required></label>
-            <label>Phone <input name="phone" placeholder="Phone" pattern="\d{10}" required></label>
+            <label>Full Name
+              <input name="name" placeholder="Your full name" pattern="[A-Za-z\s]+" title="Name should contain only letters and spaces" required>
+              <span class="error-msg" id="name-error" style="display:none;color:#dc2626;font-size:12px;margin-top:4px">❌ Name should contain only letters</span>
+            </label>
+            <label>Phone
+              <input name="phone" placeholder="10-digit phone number" type="tel" pattern="\d{10}" maxlength="10" inputmode="numeric" title="Phone must be exactly 10 digits" required>
+              <span class="error-msg" id="phone-error" style="display:none;color:#dc2626;font-size:12px;margin-top:4px">❌ Phone must be exactly 10 digits (numbers only)</span>
+            </label>
             <label>Email <input name="email" placeholder="Your email" type="email" required></label>
-            <label>PAN <input name="pan" placeholder="PAN (e.g., ABCDE1234F)" pattern="[A-Z]{5}[0-9]{4}[A-Z]" style="text-transform:uppercase" required></label>
+            <label>PAN <input name="pan" placeholder="PAN (e.g., ABCDE1234F)" pattern="[A-Z]{5}[0-9]{4}[A-Z]" style="text-transform:uppercase" title="PAN format: 5 letters, 4 numbers, 1 letter" required></label>
             <label style="grid-column: 1 / -1">City Type (for HRA calculation)
               <select name="city_type" required>
                 <option value="">-- Select City Type --</option>
@@ -118,6 +144,17 @@
     <!-- STEP 3 — Investment Proofs (upload + details combined) -->
     <section class="step" data-step="3">
       <h2>All the applicable investment documents</h2>
+      <div style="background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:2px solid #10b981;border-radius:12px;padding:16px;margin-bottom:20px">
+        <p class="hint" style="margin:0;color:#065f46;font-weight:600">
+          💡 <b>QUICK UPLOAD TIPS:</b>
+        </p>
+        <ul style="margin:8px 0 0 0;padding-left:20px;color:#065f46;font-size:13px;line-height:1.6">
+          <li><b>Multiple files:</b> You can upload multiple files at once (PDF, JPG, PNG, etc.)</li>
+          <li><b>Use Camera:</b> Click "Use Camera" button to capture documents directly from your phone</li>
+          <li><b>Auto-extraction:</b> Documents are processed automatically when you click Next</li>
+          <li><b>Verify:</b> Review extracted values and edit if needed</li>
+        </ul>
+      </div>
       <p class="hint">Toggle <b>Yes</b> for applicable items and upload the document. Extraction runs automatically when you click <b>Next</b>; then verify.</p>
 
       <input type="hidden" name="home_loans_json" id="homeLoansJson" value="[]">
@@ -133,9 +170,10 @@
           </select>
         </div>
         <div id="houseRentBody" style="display:none;margin-top:10px">
-          <label>Monthly Rental Amount (with proof)
-            <input name="rent_paid" type="number" placeholder="e.g. 15000">
+          <label>Annual Rental Amount (for HRA calculation)
+            <input name="rent_paid" type="number" placeholder="e.g. 180000">
           </label>
+          <p class="hint" style="margin-top:4px;font-size:12px">Enter your total annual rent paid (12 months)</p>
         </div>
       </div>
 
@@ -178,13 +216,17 @@
       <!-- Health Insurance - Self -->
       <div class="proof-section">
         <div class="proof-header">
-          <span>Health Insurance — Self &amp; Family</span>
+          <span>Health Insurance — Self</span>
           <select class="proof-toggle" onchange="toggleSection('healthSelfBody',this.value)">
             <option value="na">N/A</option><option value="yes">Yes</option>
           </select>
         </div>
         <div id="healthSelfBody" style="display:none;margin-top:10px">
-          <label class="file"><span>Health Insurance Document</span>
+          <label>Annual Health Insurance Premium (Self)
+            <input type="number" name="health_insurance_self_annual" placeholder="e.g. 25000" step="100">
+          </label>
+          <p class="hint">Enter your annual health insurance premium paid for self</p>
+          <label class="file" style="margin-top:12px"><span>Health Insurance Document (Self)</span>
             <input type="file" id="docInsHealth" accept="*/*" multiple>
             <button type="button" class="camera-btn" data-target="docInsHealth">Use Camera</button>
           </label>
@@ -202,10 +244,19 @@
           </select>
         </div>
         <div id="healthParentBody" style="display:none;margin-top:10px">
-          <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-            <input type="checkbox" name="parents_senior" value="1" style="width:auto;margin:0">
-            <span>Parents are Senior Citizens (higher 80D limit applies)</span>
+          <label>Annual Health Insurance Premium (Parents)
+            <input type="number" name="health_insurance_parents_annual" placeholder="e.g. 35000" step="100">
           </label>
+          <p class="hint">Enter your annual health insurance premium paid for parents</p>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
+            <input type="checkbox" name="parents_senior" value="1" style="width:auto;margin:0">
+            <span><b>Parents are Senior Citizens</b> (higher 80D limit applies - up to ₹75,000)</span>
+          </label>
+          <label class="file" style="margin-top:12px"><span>Health Insurance Document (Parents)</span>
+            <input type="file" id="docInsHealthParent" accept="*/*" multiple>
+            <button type="button" class="camera-btn" data-target="docInsHealthParent">Use Camera</button>
+          </label>
+          <div id="healthParentStatus" class="status" style="display:none;margin-bottom:8px"></div>
         </div>
         </div>
       </div>
@@ -310,7 +361,7 @@
       <div class="grid">
         <label>Home Loan Interest (Annual) <input name="home_loan_interest" type="number" placeholder="₹ (from certificate)"></label>
         <label>Home Loan Principal (Annual) <input name="home_loan_principal" type="number" placeholder="₹ (from certificate)"></label>
-        <label>Monthly Rent Paid <input name="monthly_rent" type="number" placeholder="₹ (for HRA calculation)"></label>
+        <label>Annual Rent Paid (for HRA calculation) <input name="monthly_rent" type="number" placeholder="₹ annual amount"></label>
         <label>School / Tuition Fees (Annual) <input name="school_fees" type="number" placeholder="₹ (from receipt)"></label>
         <label>PRAN Number (NPS) <input name="nps_pran" placeholder="Enter your PRAN"></label>
         <label>NPS — Employee Contribution (Annual) <input name="nps_self" type="number" placeholder="₹ (from statement)"></label>
@@ -360,7 +411,7 @@
         </div>
         <div id="additionalIncomeBody" style="display:none;margin-top:12px">
           <div class="grid">
-            <label>Rental Income (Monthly) <input name="rental_income_monthly" type="number"></label>
+            <label>Annual Rental Income <input name="rental_income_monthly" type="number" placeholder="₹ annual"></label>
             <label>F&amp;O Trading P/L <input name="fno_pl" type="number"></label>
             <label>Securities Income <input name="securities_income" type="number"></label>
             <label>Business Nature <input name="business_nature" placeholder="e.g. Freelance design"></label>
@@ -392,16 +443,22 @@
     <!-- STEP 6 — Submit -->
     <section class="step" data-step="6">
       <h2>Confirm & Submit</h2>
-        <div class="mega-offer">
-      Refer 5 friends or family members to qualify for a full fee waiver
-        </div>
+
+      <!-- MASSIVE REFERRAL HIGHLIGHT -->
+      <div class="mega-offer" style="font-size:20px;padding:32px 24px;margin:0 -24px 32px;border-radius:0;text-align:center;letter-spacing:1px;text-transform:uppercase">
+        <div style="margin-bottom:8px">🎁 SPECIAL OFFER 🎁</div>
+        <div style="font-size:28px;font-weight:900;margin-bottom:8px;color:#fff">Refer 5 Friends/Family</div>
+        <div style="font-size:24px;font-weight:900;color:#fef3c7">GET 100% FEES WAIVED OFF</div>
+        <div style="font-size:12px;color:#d1fae5;margin-top:8px;font-weight:600">Your filing will be absolutely FREE after your referrals file</div>
+      </div>
+
       <p>Our experts will review your filing and send your <b>3-option Quote</b> on WhatsApp within 24 hours.</p>
       <ul class="bullets">
         <li>Personalized refund analysis</li>
         <li>Best regime recommendation</li>
         <li>50% upfront + 50% after refund credited</li>
       </ul>
-    
+
       <div class="consent-row">
         <label class="consent-row"><input type="checkbox" id="consent" required> <span>I consent to data processing & WhatsApp communication.</span></label>
       </div>
@@ -416,6 +473,36 @@
         <div class="code" id="refCode">—</div>
         <p>Share this and earn up to <b>₹15,000</b> cashback!</p>
         <p>Personal Guidance and Tax awareness Campaign will be conducted by our Authorised experts in your community / Society / Corporate / etc for larger audiences (50+).</p>
+      </div>
+
+      <!-- Refer & Earn Bonanza Section -->
+      <div class="bonanza-section" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5);border:2px solid #10b981;border-radius:20px;padding:32px;margin:24px 0;text-align:center">
+        <h3 style="color:#065f46;font-size:24px;font-weight:800;margin-bottom:8px">🎁 Refer & Earn Bonanza</h3>
+        <p style="color:#047857;font-weight:600;margin-bottom:12px">Submit your referrals and earn gift vouchers</p>
+        <p style="color:#4b5563;font-size:14px;margin-bottom:20px;line-height:1.6">Personal Guidance and Tax awareness Campaign will be conducted by our Authorised experts in your community / Society / Corporate / etc for larger audience (50+)</p>
+
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px">
+          <div style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:16px;border-radius:12px;font-weight:700">
+            <div style="font-size:22px">1</div>
+            <div style="font-size:11px;margin:4px 0">Referral</div>
+            <div style="font-size:13px;color:#d1fae5">₹250</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:16px;border-radius:12px;font-weight:700">
+            <div style="font-size:22px">3</div>
+            <div style="font-size:11px;margin:4px 0">Referrals</div>
+            <div style="font-size:13px;color:#d1fae5">₹1,000</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:16px;border-radius:12px;font-weight:700">
+            <div style="font-size:22px">5</div>
+            <div style="font-size:11px;margin:4px 0">Referrals</div>
+            <div style="font-size:13px;color:#d1fae5">FREE + ₹5K</div>
+          </div>
+          <div style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:16px;border-radius:12px;font-weight:700">
+            <div style="font-size:22px">10</div>
+            <div style="font-size:11px;margin:4px 0">Referrals</div>
+            <div style="font-size:13px;color:#d1fae5">₹15,000</div>
+          </div>
+        </div>
       </div>
 
       <div class="quote-section" id="quoteSection" style="margin-top:24px">
@@ -561,6 +648,30 @@ fetch('components/footer.html')
   }
   if(document.readyState==='loading'){window.addEventListener('DOMContentLoaded',updateHeaderSpacing);}else{updateHeaderSpacing();}
   window.addEventListener('resize',updateHeaderSpacing);
+})();
+</script>
+
+<!-- Load premium floating components -->
+<script>
+(function(){
+  async function loadFloatingSidebar(){
+    try{
+      const resp = await fetch('components/referral-sidebar.html');
+      const html = await resp.text();
+      document.body.insertAdjacentHTML('afterbegin', html);
+      // Update widget with current form data
+      setTimeout(() => {
+        if(typeof updateReferralWidget === 'function'){
+          updateReferralWidget();
+        }
+      }, 100);
+    }catch(e){console.log('Sidebar load error:', e);}
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded', loadFloatingSidebar);
+  }else{
+    loadFloatingSidebar();
+  }
 })();
 </script>
 </body>
