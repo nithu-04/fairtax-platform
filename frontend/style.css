@@ -4299,6 +4299,249 @@ a:hover {
   .hero-with-image { min-height: 300px; }
 
 /* ═════════════════════════════════════════════════════════════════════════ */
+/* HERO CARDS REDESIGN - INTEGRATED WITH IMAGE (OPUS FIX) */
+/* ═════════════════════════════════════════════════════════════════════════ */
+
+.hero-cards-section {
+  position: relative;
+  margin: 48px 0;
+  min-height: 500px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 24px;
+  overflow: hidden;
+}
+
+.hero-bg-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+.hero-bg-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
+.hero-bg-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, rgba(11, 37, 69, 0.4) 0%, rgba(5, 150, 105, 0.2) 100%);
+  z-index: 1;
+}
+
+.hero-cards-grid {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  padding: 48px;
+  max-width: 1100px;
+  width: 100%;
+}
+
+.hero-card-modern {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.98) 100%);
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  border-radius: 20px;
+  padding: 32px 24px;
+  text-decoration: none;
+  color: inherit;
+  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-card-modern::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -50%;
+  width: 300px;
+  height: 300px;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.1) 0%, transparent 70%);
+  animation: float 6s ease-in-out infinite;
+}
+
+.hero-card-modern > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hero-card-modern:hover {
+  transform: translateY(-12px) scale(1.02);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.6);
+  border-color: rgba(16, 185, 129, 0.3);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.98) 0%, rgba(240, 253, 244, 0.98) 100%);
+}
+
+.card-icon {
+  font-size: 48px;
+  line-height: 1;
+}
+
+.hero-card-modern h3 {
+  font-size: 20px;
+  font-weight: 900;
+  color: #0B2545;
+  margin: 0;
+}
+
+.card-main-text {
+  font-size: 16px;
+  color: #4b5563;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.card-emphasis {
+  background: linear-gradient(135deg, #059669, #10b981);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 900;
+  font-size: 18px;
+}
+
+.card-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-list li {
+  font-size: 13px;
+  color: #4b5563;
+  font-weight: 600;
+}
+
+.card-highlight {
+  background: linear-gradient(135deg, #fef3c7, #fef08a);
+  border: 2px solid #fbbf24;
+  border-radius: 12px;
+  padding: 12px 16px;
+  text-align: center;
+  font-weight: 700;
+  color: #78350f;
+  font-size: 13px;
+}
+
+.card-btn-modern {
+  background: linear-gradient(135deg, #059669, #047857);
+  color: #fff;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 8px 20px rgba(5, 150, 105, 0.3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 8px;
+}
+
+.card-btn-modern:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(5, 150, 105, 0.4);
+}
+
+.card-btn-blue {
+  background: linear-gradient(135deg, #1A56DB, #1E40AF) !important;
+  box-shadow: 0 8px 20px rgba(26, 86, 219, 0.3) !important;
+}
+
+.card-btn-blue:hover {
+  box-shadow: 0 12px 30px rgba(26, 86, 219, 0.4) !important;
+}
+
+.card-btn-green {
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3) !important;
+}
+
+.card-btn-green:hover {
+  box-shadow: 0 12px 30px rgba(16, 185, 129, 0.4) !important;
+}
+
+/* ─── WEEKLY WINNERS SECTION REDESIGN ──────────────────────────────────── */
+
+.weekly-winners-section {
+  margin: 64px 0;
+  padding: 48px 24px;
+  background: linear-gradient(135deg, #fef3c7 0%, #fef08a 50%, #fef3c7 100%);
+  border-radius: 24px;
+  box-shadow: 0 12px 40px rgba(251, 191, 36, 0.2);
+}
+
+/* ─── HERO CARDS RESPONSIVE ─────────────────────────────────────────────── */
+
+@media (max-width: 1024px) {
+  .hero-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    padding: 40px;
+  }
+
+  .hero-cards-section {
+    min-height: 600px;
+  }
+}
+
+@media (max-width: 768px) {
+  .hero-cards-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    padding: 32px 16px;
+  }
+
+  .hero-cards-section {
+    min-height: 400px;
+    margin: 32px 0;
+  }
+
+  .hero-card-modern {
+    padding: 24px 16px;
+  }
+
+  .card-icon {
+    font-size: 40px;
+  }
+
+  .hero-card-modern h3 {
+    font-size: 18px;
+  }
+
+  .card-main-text {
+    font-size: 14px;
+  }
+
+  .weekly-winners-section {
+    padding: 32px 16px;
+  }
+}
+
+/* ═════════════════════════════════════════════════════════════════════════ */
 /* PHASE 5: PREMIUM ENHANCEMENTS - OWNER'S VISION IMPLEMENTATION */
 /* ═════════════════════════════════════════════════════════════════════════ */
 
