@@ -81,7 +81,7 @@
   </div>
 
   <div class="progress"><div id="bar"></div></div>
-  <div class="step-label" id="stepLabel">Step 1 of 7</div>
+  <div class="step-label" id="stepLabel">Step 1 of 8</div>
 
   <!-- BREADCRUMB NAVIGATION -->
   <nav class="breadcrumb-nav">
@@ -527,30 +527,10 @@
         </div>
       </div>
 
-      <div class="quote-section" id="quoteSection" style="margin-top:24px">
+      <div class="quote-section" id="quoteSection" style="margin-top:24px;display:none">
         <h3>Your Tax Refund Options</h3>
-        <p class="hint">Select how you'd like to receive your refund:</p>
-        <div class="options-grid" id="refundOptionsGrid">
-          <div class="option-card" data-option="A">
-            <h4>Option A — Standard</h4>
-            <div class="option-amount">₹<span id="optionA-amount">—</span></div>
-            <p class="option-description">Direct bank transfer within 7-10 working days</p>
-            <button type="button" class="btn-option" onclick="selectRefundOption('A')">Select Option A</button>
-          </div>
-          <div class="option-card" data-option="B">
-            <h4>Option B — Fast Track</h4>
-            <div class="option-amount">₹<span id="optionB-amount">—</span></div>
-            <p class="option-description">Expedited processing within 3-5 working days</p>
-            <p class="fee-note">(₹500 processing fee applicable)</p>
-            <button type="button" class="btn-option" onclick="selectRefundOption('B')">Select Option B</button>
-          </div>
-          <div class="option-card" data-option="C">
-            <h4>Option C — Savings</h4>
-            <div class="option-amount">₹<span id="optionC-amount">—</span></div>
-            <p class="option-description">Invest for 6 months @ 7.5% and earn interest</p>
-            <button type="button" class="btn-option" onclick="selectRefundOption('C')">Select Option C</button>
-          </div>
-        </div>
+        <p class="hint">Quote details will be sent to you via encrypted PDF on WhatsApp within 24 hours.</p>
+        <p style="color:#059669;font-weight:600">You will receive your personalized refund options privately on WhatsApp.</p>
       </div>
 
       <div style="margin-top:18px;text-align:center">
@@ -668,27 +648,6 @@ fetch('components/footer.html')
 })();
 </script>
 
-<!-- Load premium floating components -->
-<script>
-(function(){
-  async function loadFloatingSidebar(){
-    try{
-      const resp = await fetch('components/referral-sidebar.html');
-      const html = await resp.text();
-      document.body.insertAdjacentHTML('afterbegin', html);
-      setTimeout(() => {
-        if(typeof updateReferralWidget === 'function'){
-          updateReferralWidget();
-        }
-      }, 100);
-    }catch(e){console.log('Sidebar load error:', e);}
-  }
-  if(document.readyState==='loading'){
-    document.addEventListener('DOMContentLoaded', loadFloatingSidebar);
-  }else{
-    loadFloatingSidebar();
-  }
-})();
-</script>
+<!-- Removed: referral-sidebar floating widget per user request -->
 </body>
 </html>

@@ -1,4 +1,7 @@
-const API = "https://fairtax-backend.onrender.com/api";
+// Auto-detect environment: use localhost for development, production URL for deployed
+const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? "http://localhost:5000/api"
+  : "https://fairtax-backend.onrender.com/api";
 
 let currentStep = 1;
 let TOTAL = 7; // Default for regular filing, will be updated to 8 for free filing
@@ -685,11 +688,8 @@ async function revealReferralCode() {
     }
   }
 
-  // Step 5: Generate referral code
-  const namePrefix = refName.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'X');
-  const randomSuffix = Math.random().toString(36).substr(2, 5).toUpperCase();
-  const code = namePrefix + '_' + randomSuffix;
-
+  // Step 5: Generate referral code in format: NAME_FAIRTAXXX (XX = 2-digit random)
+  const code = generateReferralCode(refName);
   referralCode = code;
   localStorage.setItem('referral_code', code);
   const rcEl = document.querySelector('[name="referral_code"]');
@@ -1009,10 +1009,19 @@ $("#submit").onclick = async () => {
 
       // If backend didn't provide a code or code is in wrong format, generate one locally
       if (!refCode || refCode === '—' || !validateReferralCodeFormat(refCode)) {
-        const userName = document.querySelector('[name="name"]')?.value ||
-                        document.querySelector('[name="referrer_name"]')?.value ||
-                        'USER';
-        refCode = generateReferralCode(userName);
+        // Get the user's name from form (check all possible name field names)
+        const userName =
+          document.querySelector('[name="referrer_name"]')?.value?.trim() ||
+          document.querySelector('[name="name"]')?.value?.trim() ||
+          document.querySelector('[name="ref_name_1"]')?.value?.trim() ||
+          'USER';
+
+        if (userName && userName !== 'USER') {
+          refCode = generateReferralCode(userName);
+        } else {
+          // If still no name found, try to get from submission data
+          refCode = generateReferralCode(formData.get('referrer_name') || formData.get('name') || 'USER');
+        }
       }
 
       localStorage.setItem('referral_code', refCode);

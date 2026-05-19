@@ -36,7 +36,7 @@
     </p>
 
     <div class="hero-ctas">
-      <a href="index.html" class="cta-primary" onmouseover="this.style.transform='translateY(-4px)'" onmouseout="this.style.transform='translateY(0)'">
+      <a href="choice.html" class="cta-primary" onmouseover="this.style.transform='translateY(-4px)'" onmouseout="this.style.transform='translateY(0)'">
         ✅ FILE FOR FREE NOW
       </a>
       <a href="referral-filing.html" class="cta-secondary" onmouseover="this.style.transform='translateY(-4px)'" onmouseout="this.style.transform='translateY(0)'">
@@ -45,65 +45,18 @@
     </div>
   </div>
 
-  <!-- HERO SECTION WITH OVERLAID CARDS -->
+  <!-- HERO SECTION WITH OVERLAID CARDS - TEMPORARILY REMOVED -->
   <div class="hero-overlay-section">
     <!-- Background Image -->
-    <img src="images/image_fairtax.jfif" alt="Indian professionals collaborating on tax filing" class="hero-overlay-image">
+    <img src="images/image_fairtax.png" alt="Indian professionals collaborating on tax filing" class="hero-overlay-image">
 
     <!-- Gradient Overlay -->
     <div class="hero-overlay-gradient"></div>
 
-    <!-- Cards Overlaid on Image -->
-    <div class="hero-overlay-cards">
-      <!-- Card 1: Free ITR Filing -->
-      <a href="index.html" class="overlay-card">
-        <div class="card-top">
-          <div class="shield-icon">🛡️</div>
-          <h3>Great Opportunity!</h3>
-        </div>
-        <p class="card-title">File your ITR for<br><strong>FREE!</strong></p>
-        <ul class="card-features">
-          <li>✓ 100% Free Filing</li>
-          <li>✓ Easy & Secure</li>
-          <li>✓ Instant Processing</li>
-          <li>✓ Maximum Refund</li>
-        </ul>
-        <button class="card-action-btn" style="background: linear-gradient(135deg,#059669,#047857)">File for FREE Now!</button>
-      </a>
-
-      <!-- Card 2: Freelancer Earnings -->
-      <a href="https://wa.me/917397510254?text=I+want+to+join+as+a+FairTax+Freelancer+and+earn+more!" target="_blank" rel="noopener" class="overlay-card overlay-card-middle">
-        <div class="card-top">
-          <div class="rocket-icon">🚀</div>
-          <h3>Earn in Lakhs</h3>
-        </div>
-        <p class="card-title"><strong>as a Freelancer!</strong></p>
-        <div class="earn-highlight">Earn in Lakhs<br>Every Year!</div>
-        <ul class="card-features">
-          <li>✓ Work from Anywhere</li>
-          <li>✓ Flexible Hours</li>
-          <li>✓ High Earnings</li>
-          <li>✓ Be Your Own Boss</li>
-        </ul>
-        <button class="card-action-btn" style="background: linear-gradient(135deg,#1A56DB,#1E40AF)">Join as a Freelancer!</button>
-      </a>
-
-      <!-- Card 3: Referral Earnings -->
-      <a href="referral-filing.html" class="overlay-card">
-        <div class="card-top">
-          <div class="handshake-icon">🤝</div>
-          <h3>Refer & Earn</h3>
-        </div>
-        <p class="card-title">Share FairTax,<br><strong>Earn Rewards!</strong></p>
-        <ul class="card-features">
-          <li>✓ Refer your friends</li>
-          <li>✓ They file with FairTax</li>
-          <li>✓ You earn rewards</li>
-          <li>✓ Get Gift Vouchers</li>
-        </ul>
-        <button class="card-action-btn" style="background: linear-gradient(135deg,#10B981,#059669)">Refer Now & Earn!</button>
-      </a>
-    </div>
+    <!-- Cards Overlaid on Image - TEMPORARILY HIDDEN -->
+    <!-- <div class="hero-overlay-cards">
+      ...cards removed temporarily...
+    </div> -->
   </div>
 
   <!-- WEEKLY WINNERS SECTION -->
@@ -335,20 +288,18 @@ async function loadPremiumComponents() {
       winnersContainer.innerHTML = await winnersResp.text();
     }
 
-    // Load floating sidebar (add to body)
-    const sidebarResp = await fetch('components/referral-sidebar.html');
-    const sidebarHTML = await sidebarResp.text();
-    document.body.insertAdjacentHTML('afterbegin', sidebarHTML);
+    // Removed: referral-sidebar widget (UNLOCK FREE FILING card) - per user request
   } catch (e) {
     console.log('Error loading components:', e);
   }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', loadPremiumComponents);
-} else {
-  loadPremiumComponents();
-}
+// Disabled: referral-sidebar widget removed per user request
+// if (document.readyState === 'loading') {
+//   document.addEventListener('DOMContentLoaded', loadPremiumComponents);
+// } else {
+//   loadPremiumComponents();
+// }
 </script>
 <!-- Set header/nav spacing to avoid sticky overlap -->
 <script>
