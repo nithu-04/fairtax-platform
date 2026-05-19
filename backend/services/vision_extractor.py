@@ -201,6 +201,250 @@ def _parse_json_strict(response_text):
     return {}
 
 
+# Document type verification prompts
+_DOCUMENT_TYPE_VERIFICATION_PROMPTS = {
+    "form16": """You are an expert tax document classifier. Your ONLY task is to verify if this document is a Form 16 (Income Tax Return form for employers).
+
+Look for these Form 16 characteristics:
+- Finance Ministry of India header or Department of Revenue logo
+- "Form No. 16" clearly stated
+- "Income-Tax" text
+- PAN field for employee
+- Salary section with earnings breakdown
+- TDS section showing tax deducted at source
+- Assessment year field (e.g., 2023-24, 2024-25)
+- Employer details and signature
+- Generally a formal 1-2 page document
+
+Respond with ONLY this JSON (no markdown, no explanation):
+{
+  "is_document_type": true or false,
+  "confidence": 0.0 to 1.0,
+  "detected_document_type": "form16" or "payslip" or "receipt" or "other_doc_type",
+  "reasoning": "One sentence explaining what you see"
+}""",
+
+    "payslip": """You are an expert tax document classifier. Your ONLY task is to verify if this document is a Payslip (monthly salary payment slip).
+
+Look for these Payslip characteristics:
+- Employer company name and letterhead
+- Employee name and employee ID
+- Month/period (e.g., "May 2024", "March 2024")
+- Date of payment
+- Earnings section (Basic, HRA, DA, Special Allowance, etc.)
+- Deductions section (PF, TDS, PT, etc.)
+- Net salary amount
+- Year (single calendar year)
+- Monthly/single period salary breakdown
+
+Do NOT confuse with:
+- Form 16 (annual tax form, has "Finance Ministry" header)
+- Receipt (invoice, bill, website purchase receipt)
+- Certificate (loan, insurance, donation)
+
+Respond with ONLY this JSON (no markdown, no explanation):
+{
+  "is_document_type": true or false,
+  "confidence": 0.0 to 1.0,
+  "detected_document_type": "payslip" or "form16" or "receipt" or "other_doc_type",
+  "reasoning": "One sentence explaining what you see"
+}""",
+
+    "homeloan": """Verify if this is a Home Loan Interest Certificate or statement.
+
+Look for:
+- Bank name and letterhead
+- "Home Loan" or "Loan" heading
+- Loan account number
+- Interest paid amount or certificate of interest
+- Property address mentioned
+- Loan outstanding balance
+- Annual interest certificate format (often for tax purposes)
+
+Respond with ONLY this JSON:
+{
+  "is_document_type": true or false,
+  "confidence": 0.0 to 1.0,
+  "detected_document_type": "homeloan" or "other_doc_type",
+  "reasoning": "One sentence explanation"
+}""",
+
+    "school": """Verify if this is a School Fees Receipt or statement.
+
+Look for:
+- School/college name and letterhead
+- Student name
+- Academic period/year
+- "Fees", "Tuition", "Education" charges
+- Receipt number or invoice number
+- Institution address
+- Amount and date
+
+Respond with ONLY this JSON:
+{
+  "is_document_type": true or false,
+  "confidence": 0.0 to 1.0,
+  "detected_document_type": "school" or "other_doc_type",
+  "reasoning": "One sentence explanation"
+}""",
+
+    "nps": """Verify if this is an NPS (National Pension Scheme) statement.
+
+Look for:
+- "NPS" or "National Pension Scheme" text
+- Subscriber name and subscriber ID
+- Account statement header
+- Transaction summary or holdings
+- Fund information (asset classes)
+- PFRDA or Point of Presence details
+- Account statement period
+
+Respond with ONLY this JSON:
+{
+  "is_document_type": true or false,
+  "confidence": 0.0 to 1.0,
+  "detected_document_type": "nps" or "other_doc_type",
+  "reasoning": "One sentence explanation"
+}""",
+
+    "insurance": """Verify if this is an Insurance Policy or premium receipt.
+
+Look for:
+- Insurance company name and logo
+- Policy number
+- Insured person's name
+- Coverage type (Life/Health/General)
+- Premium amount and period
+- Policy term/expiry date
+- Underwriting information
+- Receipt or policy document header
+
+Respond with ONLY this JSON:
+{
+  "is_document_type": true or false,
+  "confidence": 0.0 to 1.0,
+  "detected_document_type": "insurance" or "other_doc_type",
+  "reasoning": "One sentence explanation"
+}""",
+
+    "donation": """Verify if this is a Donation Receipt (80G certificate).
+
+Look for:
+- "Donation" or "Receipt" heading
+- Recipient organization name (NGO, charity, temple, etc.)
+- 80G registration number
+- Donation amount
+- Donation date
+- Donation purpose
+- Receipt number
+- Recipient's PAN
+
+Respond with ONLY this JSON:
+{
+  "is_document_type": true or false,
+  "confidence": 0.0 to 1.0,
+  "detected_document_type": "donation" or "other_doc_type",
+  "reasoning": "One sentence explanation"
+}"""
+}
+
+
+def verify_document_type(image_bytes, declared_doc_type):
+    """
+    Verify if an uploaded document matches the declared document type.
+
+    This is a NON-BLOCKING validation step. Even if verification fails,
+    extraction still proceeds (with warning metadata in response).
+
+    Args:
+        image_bytes: Single image bytes (first page only)
+        declared_doc_type: Document type user selected (form16, payslip, etc.)
+
+    Returns:
+        {
+            "is_verified": bool - Does document match declared type?
+            "confidence": float - 0.0-1.0 confidence score
+            "declared_type": str - What user said it was
+            "detected_type": str - What we think it actually is
+            "warning": str or None - User-friendly warning message
+            "reasoning": str - Why we think what we think
+        }
+
+    Raises:
+        Exception: Only if Vision model call fails (rare)
+    """
+    try:
+        if declared_doc_type not in _DOCUMENT_TYPE_VERIFICATION_PROMPTS:
+            # Unknown type, can't verify
+            return {
+                "is_verified": True,  # Assume correct if we don't know how to verify
+                "confidence": 0.0,
+                "declared_type": declared_doc_type,
+                "detected_type": declared_doc_type,
+                "warning": None,
+                "reasoning": f"Unknown document type {declared_doc_type}, skipping verification"
+            }
+
+        # Get verification prompt
+        prompt = _DOCUMENT_TYPE_VERIFICATION_PROMPTS[declared_doc_type]
+
+        # Call Vision model for verification
+        response = ai_provider.call_vision_model(image_bytes, prompt)
+
+        # Parse response
+        try:
+            result = json.loads(response.strip())
+        except json.JSONDecodeError:
+            # If response isn't JSON, try to extract JSON from it
+            result = _parse_json_strict(response)
+            if not result:
+                # Couldn't parse, assume verified (non-blocking)
+                return {
+                    "is_verified": True,
+                    "confidence": 0.3,
+                    "declared_type": declared_doc_type,
+                    "detected_type": declared_doc_type,
+                    "warning": None,
+                    "reasoning": "Could not parse verification response, proceeding with extraction"
+                }
+
+        # Extract verification result
+        is_verified = result.get("is_document_type", True)
+        confidence = result.get("confidence", 0.5)
+        detected_type = result.get("detected_document_type", declared_doc_type)
+        reasoning = result.get("reasoning", "")
+
+        # Generate warning if mismatch detected
+        warning = None
+        if not is_verified and confidence > 0.75:
+            # High confidence that this is NOT the declared type
+            warning = f"⚠️ This appears to be a {detected_type}, not a {declared_doc_type}. The extracted data may be inaccurate. Please review the extracted data carefully."
+        elif not is_verified and confidence > 0.5:
+            # Medium confidence mismatch
+            warning = f"⚠️ This document might not be a {declared_doc_type}. Please verify the extracted data is correct."
+
+        return {
+            "is_verified": is_verified,
+            "confidence": confidence,
+            "declared_type": declared_doc_type,
+            "detected_type": detected_type,
+            "warning": warning,
+            "reasoning": reasoning
+        }
+
+    except Exception as e:
+        # If verification fails, proceed with extraction (non-blocking)
+        print(f"[DOCUMENT_TYPE_VERIFICATION] Error during verification: {str(e)}")
+        return {
+            "is_verified": True,  # Assume correct on error (non-blocking)
+            "confidence": 0.0,
+            "declared_type": declared_doc_type,
+            "detected_type": declared_doc_type,
+            "warning": None,
+            "reasoning": f"Verification error: {str(e)}"
+        }
+
+
 def _merge_page_results(page_results, doc_type):
     """
     Merge extraction results from multiple pages into single result.

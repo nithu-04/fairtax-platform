@@ -458,6 +458,41 @@ async function uploadDocs(inputId, docType) {
         console.warn("[EXTRACTION] ⚠️ Auto-save failed (will save when user clicks Next):", e);
       }
 
+      // ⚠️ NEW: Display document type verification warning if present
+      if (j.document_type_verification && j.document_type_verification.warning) {
+        const verification = j.document_type_verification;
+        const warningDiv = document.createElement('div');
+        warningDiv.className = 'document-type-warning';
+        warningDiv.style.cssText = `
+          margin-top: 15px;
+          padding: 15px;
+          border-radius: 8px;
+          background-color: #fff3cd;
+          border: 1px solid #ffc107;
+          color: #856404;
+          font-size: 14px;
+          line-height: 1.5;
+        `;
+
+        const detailsHtml = `
+          <strong>⚠️ Document Type Verification</strong><br/>
+          ${verification.warning}<br/>
+          <small style="margin-top: 10px; display: block;">
+            Declared: <strong>${verification.declared_type}</strong> |
+            Detected: <strong>${verification.detected_type}</strong> |
+            Confidence: <strong>${(verification.confidence * 100).toFixed(0)}%</strong>
+          </small>
+        `;
+        warningDiv.innerHTML = detailsHtml;
+
+        // Insert warning after status message
+        if (status) {
+          status.parentNode.insertBefore(warningDiv, status.nextSibling);
+        }
+
+        console.warn("[EXTRACTION] Document type mismatch detected:", verification);
+      }
+
       if (status) {
         status.className = "status success";
         status.textContent = "✅ Extracted & Saved! Review on next step.";

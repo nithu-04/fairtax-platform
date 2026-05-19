@@ -144,6 +144,7 @@ def extract_itr_data():
             merged_data = {}
             merged_confidence = 0
             merged_metadata = {'files_processed': len(all_results), 'individual_results': []}
+            merged_verification = None  # Track first file's verification
 
             for idx, res in enumerate(all_results, 1):
                 if res.get('success') and res.get('data'):
@@ -155,6 +156,9 @@ def extract_itr_data():
                         'success': True,
                         'confidence': res.get('confidence', 0)
                     })
+                    # Keep first file's verification (most important)
+                    if merged_verification is None and res.get('document_type_verification'):
+                        merged_verification = res.get('document_type_verification')
                 else:
                     merged_metadata['individual_results'].append({
                         'file': idx,
@@ -168,6 +172,14 @@ def extract_itr_data():
                 'confidence': merged_confidence,
                 'metadata': merged_metadata
             }
+            # Add verification metadata if available
+            if merged_verification:
+                result['document_type_verification'] = merged_verification
+
+        # Ensure document_type_verification is in response (already in single-file case)
+        if 'document_type_verification' not in result and len(all_results) > 0:
+            if all_results[0].get('document_type_verification'):
+                result['document_type_verification'] = all_results[0]['document_type_verification']
 
         return jsonify(result), 200 if result['success'] else 422
 

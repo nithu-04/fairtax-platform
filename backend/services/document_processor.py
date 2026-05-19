@@ -72,7 +72,32 @@ def process_documents(file_bytes, mime_type, doc_type):
                 "metadata": {}
             }
 
-        # ─────── STEP 2: PASS 1 - Vision Extraction ─────
+        # ─────── STEP 2: Document Type Verification ───────
+        # Non-blocking verification step - checks if document matches declared type
+        document_verification = None
+        try:
+            print(f"[DOCUMENT_PROCESSOR] Verifying document type '{doc_type}'...")
+            if images and len(images) > 0:
+                # Use first page for verification
+                document_verification = vision_extractor.verify_document_type(images[0], doc_type)
+                print(f"[DOCUMENT_PROCESSOR] Document type verification complete. "
+                      f"Verified: {document_verification.get('is_verified')}, "
+                      f"Confidence: {document_verification.get('confidence')}")
+                if document_verification.get('warning'):
+                    print(f"[DOCUMENT_PROCESSOR] ⚠️ Verification warning: {document_verification['warning']}")
+        except Exception as e:
+            # Verification errors are non-blocking, just log and continue
+            print(f"[DOCUMENT_PROCESSOR] Document type verification error (non-blocking): {str(e)}")
+            document_verification = {
+                "is_verified": True,
+                "confidence": 0.0,
+                "declared_type": doc_type,
+                "detected_type": doc_type,
+                "warning": None,
+                "reasoning": f"Verification error: {str(e)}"
+            }
+
+        # ─────── STEP 3: PASS 1 - Vision Extraction ─────
         try:
             print(f"[DOCUMENT_PROCESSOR] Starting Vision extraction for {len(images)} page(s)...")
             extraction = vision_extractor.extract_pass1_vision(images, doc_type)
@@ -96,7 +121,7 @@ def process_documents(file_bytes, mime_type, doc_type):
                 }
             }
 
-        # ─────── STEP 3: Normalize & Aggregate ─────────
+        # ─────── STEP 4: Normalize & Aggregate ─────────
         try:
             print(f"[DOCUMENT_PROCESSOR] Normalizing extracted data...")
             normalized_result = normalization_service.normalize_extractions(
@@ -126,7 +151,7 @@ def process_documents(file_bytes, mime_type, doc_type):
                 "metadata": {}
             }
 
-        # ─────── STEP 4: Validate ──────────────────────
+        # ─────── STEP 5: Validate ──────────────────────
         # For extracted/OCR'd data, validation is informational only.
         # Errors here represent things the user should review/correct (bad PAN, salary mismatches)
         # but should NOT block extraction — the user can edit the fields manually after extraction.
@@ -146,7 +171,7 @@ def process_documents(file_bytes, mime_type, doc_type):
             print(f"[DOCUMENT_PROCESSOR] Validation error (non-blocking): {str(e)}")
             validation_result = {"errors": [], "warnings": [{"reason": str(e)}]}
 
-        # ─────── STEP 5: Return Success ────────────────
+        # ─────── STEP 6: Return Success ────────────────
         print(f"[DOCUMENT_PROCESSOR] Pipeline complete. Document processing successful.")
 
         return {
@@ -164,6 +189,7 @@ def process_documents(file_bytes, mime_type, doc_type):
                 "fields_high_confidence": normalized_result.get("fields_high_confidence", []),
                 "fields_low_confidence": normalized_result.get("fields_low_confidence", [])
             },
+            "document_type_verification": document_verification,
             "error": None
         }
 
