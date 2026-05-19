@@ -4317,8 +4317,8 @@ a:hover {
   position: relative;
   width: 100%;
   max-width: 100%;
+  margin: 32px 16px 48px 16px;
   height: 600px;
-  margin: 32px auto 48px auto;
   border-radius: 20px;
   overflow: hidden;
   display: flex;
@@ -4464,6 +4464,8 @@ a:hover {
 @media (max-width: 1024px) {
   .hero-overlay-section {
     height: 650px;
+    width: 100%;
+    margin: 32px 16px 48px 16px;
   }
 
   .hero-overlay-cards {
@@ -4492,9 +4494,10 @@ a:hover {
   }
 
   .hero-overlay-section {
-    height: auto;
-    min-height: 400px;
-    margin: 16px auto 32px auto;
+    height: 400px;
+    width: 100%;
+    margin: 16px 16px 32px 16px;
+    border-radius: 12px;
   }
 
   .hero-overlay-cards {
@@ -4547,7 +4550,8 @@ a:hover {
   .hero-overlay-section {
     height: 350px;
     border-radius: 12px;
-    margin: 12px auto 24px auto;
+    width: 100%;
+    margin: 12px 12px 24px 12px;
   }
 
   .hero-overlay-cards {
