@@ -15,7 +15,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = Config.FLASK_SECRET
-CORS(app)
+CORS(app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=True
+)
 from itr_api import itr_bp
 app.register_blueprint(itr_bp)
 
