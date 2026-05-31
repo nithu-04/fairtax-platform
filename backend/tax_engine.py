@@ -152,11 +152,11 @@ def _compute_old_regime(
     deductions_total,
     tds
 ):
-    gti = gross + other_income - sec10_total - home_loan_interest - std_deduction - pt
-    taxable = max(0, gti - deductions_total)
+    gti = gross + other_income - sec10_total
+    taxable = max(0, gti - home_loan_interest - std_deduction - pt - deductions_total)
 
     tax = slab_tax_old(taxable)
-    # Apply surcharge and cess based on total income (gti)
+    # Apply surcharge and cess based on TRUE total income (gti = before deductions)
     s_info = _apply_surcharge_and_cess(tax, gti)
     total_tax = s_info['total_tax']
 
@@ -287,9 +287,9 @@ def calculate(payload):
     )
 
     # ===== NEW REGIME =====
-    gti_new = gross + other_income - std_new
+    gti_new = gross + other_income
 
-    taxable_new = max(0, gti_new - sec_80ccd_2_new)
+    taxable_new = max(0, gti_new - std_new - sec_80ccd_2_new)
 
     tax_new = slab_tax_new(taxable_new)
     s_info_new = _apply_surcharge_and_cess(tax_new, gti_new)
