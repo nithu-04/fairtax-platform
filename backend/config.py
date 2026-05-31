@@ -21,6 +21,10 @@ class Config:
     # Verify token used when registering the webhook with Meta/Facebook
     WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 
+    # ManyChat WhatsApp Integration
+    MANYCHAT_API_TOKEN = os.getenv("MANYCHAT_API_TOKEN", "")
+    MANYCHAT_PHONE_NUMBER = os.getenv("MANYCHAT_PHONE_NUMBER", "9600165254")
+
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:5000")
 

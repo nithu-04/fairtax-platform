@@ -205,12 +205,12 @@ def get_row_by_submission_id(submission_id):
         print(f"[SHEETS] Sheets unavailable - returning None for {submission_id}")
         return None
 
-    # ✅ ENSURE HEADERS FIRST
+    # [OK] ENSURE HEADERS FIRST
     _ensure_headers(ws, HEADERS)
 
     all_values = _ws_call(ws, 'get_all_values')
 
-    # ✅ If only header exists → no rows yet
+    # [OK] If only header exists → no rows yet
     if len(all_values) <= 1:
         return None
 
@@ -300,20 +300,52 @@ def upsert_phase(phone, partial_data):
 
 
 def append_doc_urls(submission_id, doc_type_col, urls):
+    print(f"[SHEETS] append_doc_urls CALLED: submission_id={submission_id}, doc_type_col={doc_type_col}, urls={urls}")
+
     ws = _sheet("Submissions")
+    if ws is None:
+        print(f"[SHEETS] [ERROR] append_doc_urls: Sheets unavailable for {submission_id}")
+        return
+
     _ensure_headers(ws, HEADERS)
 
     row_idx = get_row_by_submission_id(submission_id)
+    print(f"[SHEETS] append_doc_urls: Found row_idx={row_idx} for submission_id={submission_id}")
     if row_idx is None:
+        print(f"[SHEETS] [ERROR] append_doc_urls: Row not found for submission {submission_id}")
         return
 
-    col = HEADERS.index(doc_type_col) + 1
-    cell = _ws_call(ws, 'cell', row_idx, col)
-    existing = cell.value or ""
-    existing_parts = [p for p in existing.split(",") if p]
-    combined_parts = existing_parts + [u for u in urls if u]
-    combined = ",".join(combined_parts)
-    _ws_call(ws, 'update_cell', row_idx, col, combined)
+    # Get dynamic column mapping from actual sheet (not static HEADERS)
+    col_map = get_column_map()
+    print(f"[SHEETS] append_doc_urls: col_map keys = {list(col_map.keys()) if col_map else 'None'}")
+    if col_map is None:
+        print(f"[SHEETS] [ERROR] append_doc_urls: Failed to get column map for {submission_id}")
+        return
+
+    # Validate document column exists in actual sheet
+    if doc_type_col not in col_map:
+        print(f"[SHEETS] [ERROR] append_doc_urls: Column '{doc_type_col}' not found in sheet.")
+        print(f"[SHEETS]    Available doc columns: {[k for k in col_map.keys() if 'doc_' in k]}")
+        return
+
+    try:
+        col = col_map[doc_type_col]  # Use dynamic column mapping
+        print(f"[SHEETS] append_doc_urls: Getting cell at row={row_idx}, col={col}")
+        cell = _ws_call(ws, 'cell', row_idx, col)
+        print(f"[SHEETS] append_doc_urls: Current cell value = '{cell.value}'")
+
+        existing = cell.value or ""
+        existing_parts = [p for p in existing.split(",") if p]
+        combined_parts = existing_parts + [u for u in urls if u]
+        combined = ",".join(combined_parts)
+
+        print(f"[SHEETS] append_doc_urls: Writing to cell: '{combined}'")
+        _ws_call(ws, 'update_cell', row_idx, col, combined)
+        print(f"[SHEETS] [OK] append_doc_urls: SAVED {len(urls)} URLs to {doc_type_col} (row={row_idx}, col={col}) for {submission_id}")
+    except Exception as e:
+        print(f"[SHEETS] [ERROR] append_doc_urls: Error updating {doc_type_col}: {e}")
+        import traceback
+        traceback.print_exc()
 def verify_calculation_consistency(submission_id, calc):
     """Verify that calculation data is consistent and safe for PDF/email.
     Returns (is_valid, issues_list)
@@ -380,7 +412,7 @@ def verify_calculation_consistency(submission_id, calc):
 
 
 def log_referral(referrer_code, referred_name, referred_phone, referred_pan=None):
-    """Log a referral with deduplication check.
+    """Log a referral with deduplication check and status tracking.
 
     Args:
         referrer_code: Code of person making the referral
@@ -395,7 +427,17 @@ def log_referral(referrer_code, referred_name, referred_phone, referred_pan=None
     if rws is None:
         print(f"[SHEETS] log_referral: Sheets unavailable, skipping referral log")
         return False
-    _ensure_headers(rws, ["timestamp", "referrer_code", "referred_name", "referred_phone", "referred_pan"])
+
+    # Ensure headers include the new referral_status column
+    _ensure_headers(rws, [
+        "timestamp",
+        "referrer_code",
+        "referred_name",
+        "referred_phone",
+        "referred_pan",
+        "referral_status",  # NEW: Track status of referral (invited, registered, docs_uploaded, etc.)
+        "status_updated_at"  # NEW: When status was last updated
+    ])
 
     # DEDUPLICATION: Check if this phone was already referred
     existing_referrals = _ws_call(rws, 'get_all_records')
@@ -411,13 +453,15 @@ def log_referral(referrer_code, referred_name, referred_phone, referred_pan=None
             print(f"[REFERRAL] Duplicate PAN detected: {referred_pan}, skipping")
             return False
 
-    # No duplicate found, log the referral
+    # No duplicate found, log the referral with initial status "invited"
     _ws_call(rws, 'append_row', [
-        datetime.now().isoformat(),
-        referrer_code,
-        referred_name,
-        referred_phone,
-        referred_pan or ""
+        datetime.now().isoformat(),  # timestamp
+        referrer_code,               # referrer_code
+        referred_name,               # referred_name
+        referred_phone,              # referred_phone
+        referred_pan or "",          # referred_pan
+        "invited",                   # referral_status (initial state)
+        datetime.now().isoformat()   # status_updated_at
     ])
 
     # Increment referrer's count
@@ -434,7 +478,76 @@ def log_referral(referrer_code, referred_name, referred_phone, referred_pan=None
             _ws_call(ws, 'update_cell', c.row, count_col, cur + 1)
             break
 
+    print(f"[REFERRAL] [OK] Logged referral: {referred_name} ({referred_phone}) with status=invited")
     return True
+
+
+def update_referral_status(referred_phone, new_status):
+    """Update the status of a referral by phone number.
+
+    Status progression:
+    - invited: Initial state when referral is added
+    - registered: Referred user has signed up
+    - docs_uploaded: Referred user uploaded documents
+    - quote_generated: Quote generated for referred user
+    - fees_paid: Payment completed by referred user
+    - filing_submitted: Filing submitted by referred user
+    - completed: Filing completed successfully
+
+    Args:
+        referred_phone: Phone of referred person (10 digits, will normalize to last 10 digits)
+        new_status: New status value
+
+    Returns:
+        bool: True if updated, False if not found
+    """
+    rws = _sheet("Referrals")
+    if rws is None:
+        print(f"[SHEETS] update_referral_status: Sheets unavailable")
+        return False
+
+    try:
+        # Normalize phone to last 10 digits
+        phone_digits = ''.join(c for c in str(referred_phone) if c.isdigit())
+        normalized_phone = phone_digits[-10:] if len(phone_digits) >= 10 else phone_digits
+
+        # Get all referrals
+        records = _ws_call(rws, 'get_all_records')
+
+        # Find matching referral by referred_phone
+        for i, record in enumerate(records):
+            rec_phone = str(record.get('referred_phone', '')).strip()
+            if rec_phone == normalized_phone:
+                # Update status
+                row_num = i + 2  # +2 because gspread is 1-indexed and row 1 is headers
+
+                # Find column indices
+                headers = _ws_call(rws, 'row_values', 1)
+                status_col = None
+                updated_at_col = None
+
+                for col_idx, header in enumerate(headers, start=1):
+                    if header == "referral_status":
+                        status_col = col_idx
+                    elif header == "status_updated_at":
+                        updated_at_col = col_idx
+
+                if status_col:
+                    _ws_call(rws, 'update_cell', row_num, status_col, new_status)
+                if updated_at_col:
+                    _ws_call(rws, 'update_cell', row_num, updated_at_col, datetime.now().isoformat())
+
+                print(f"[REFERRAL] [OK] Updated referral status: {normalized_phone} → {new_status}")
+                return True
+
+        print(f"[REFERRAL] [WARN] Referral not found by phone: {normalized_phone}")
+        return False
+
+    except Exception as e:
+        print(f"[REFERRAL] [ERROR] Error updating referral status: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 def insert_submission(data):
@@ -634,15 +747,31 @@ def update_row(row, data):
         print("[SHEETS] Skipping update_row - Sheets unavailable")
         return
     col_map = get_column_map()
+    if col_map is None:
+        print("[SHEETS] ERROR: update_row - Failed to get column map, skipping data save")
+        return
+
+    updated_fields = []
+    skipped_fields = []
 
     for k, v in data.items():
         if k in col_map:
             # Skip empty string / None to avoid clearing values unintentionally
             if v is None:
+                skipped_fields.append(f"{k}=None")
                 continue
             if isinstance(v, str) and v.strip() == "":
+                skipped_fields.append(f"{k}=empty_string")
                 continue
             try:
                 _ws_call(ws, 'update_cell', row, col_map[k], v)
+                updated_fields.append(k)
             except Exception as e:
-                print(f"Error updating {k}: {e}")
+                print(f"[SHEETS] Error updating {k}: {e}")
+        else:
+            skipped_fields.append(f"{k}=not_in_col_map")
+
+    if updated_fields or skipped_fields:
+        print(f"[SHEETS] update_row: Updated {len(updated_fields)} fields: {updated_fields[:5]}")
+        if skipped_fields:
+            print(f"[SHEETS] update_row: Skipped {len(skipped_fields)} fields (first 10): {skipped_fields[:10]}")

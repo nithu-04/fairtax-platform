@@ -283,6 +283,7 @@ async function uploadDocs(inputId, docType) {
 
   [...input.files].forEach((f) => fd.append("file", f));
   fd.append("doc_type", docType);
+  fd.append("submission_id", submissionId);
 
   const status = $("#extractStatus");
   const loader = document.getElementById("extractionLoader");
@@ -1670,6 +1671,7 @@ async function extractSection(inputId, docType, statusId) {
   const fd = new FormData();
   [...input.files].forEach((f) => fd.append("file", f));
   fd.append("doc_type", docType);
+  fd.append("submission_id", submissionId);
 
   try {
     // Use /api/itr/extract for proper ITR extraction

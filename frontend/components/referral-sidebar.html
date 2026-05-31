@@ -1,0 +1,68 @@
+<!-- FLOATING REFERRAL SIDEBAR WIDGET - Premium Conversion Driver -->
+<div class="referral-sidebar-widget" id="referralSidebarWidget">
+  <div class="sidebar-header">
+    <span class="sidebar-icon">🎁</span>
+    UNLOCK FREE FILING
+  </div>
+
+  <div class="sidebar-title">Refer 5 Friends</div>
+
+  <div class="sidebar-offer">Get 100% FEES WAIVED</div>
+
+  <div class="referral-count">
+    <div class="count-number" id="referralCountDisplay">0/5</div>
+    <div class="count-label">Referrals Needed</div>
+  </div>
+
+  <div class="progress-bar-container">
+    <div class="progress-bar-fill" id="referralProgressBar" style="width: 0%"></div>
+  </div>
+
+  <div class="earnings-box">
+    <div class="earnings-label">🏆 Your Earnings</div>
+    <div class="earnings-amount" id="referralEarningsDisplay">₹0</div>
+  </div>
+
+  <button class="sidebar-btn" id="sidebarReferBtn" onclick="scrollToReferralForm()">
+    ➕ ADD REFERRALS
+  </button>
+
+  <a class="sidebar-link" onclick="showRewardTiers()">View Reward Tiers →</a>
+</div>
+
+<script>
+function updateReferralWidget() {
+  const count = parseInt(localStorage.getItem('referral_count') || '0');
+  const countDisplay = document.getElementById('referralCountDisplay');
+  const progressBar = document.getElementById('referralProgressBar');
+  const earningsDisplay = document.getElementById('referralEarningsDisplay');
+
+  if (countDisplay && progressBar && earningsDisplay) {
+    countDisplay.textContent = `${count}/5`;
+    progressBar.style.width = (count / 5) * 100 + '%';
+
+    // Calculate earnings: 250 per referral up to 5000 max for 5 referrals
+    const earnings = Math.min(count * 250, 5000);
+    earningsDisplay.textContent = `₹${earnings.toLocaleString('en-IN')}`;
+  }
+}
+
+function scrollToReferralForm() {
+  const formCard = document.querySelector('form') || document.querySelector('#taxForm');
+  if (formCard) {
+    formCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function showRewardTiers() {
+  alert(`🎁 FairTax Referral Rewards\n\n` +
+    `Refer 1 → ₹250 cashback\n` +
+    `Refer 3 → ₹1,000 cashback\n` +
+    `Refer 5 → 100% FREE FILING + ₹5,000 cashback\n` +
+    `Refer 10 → ₹15,000 bonus\n\n` +
+    `Start referring now to unlock rewards! 🚀`);
+}
+
+// Update widget on page load
+document.addEventListener('DOMContentLoaded', updateReferralWidget);
+</script>

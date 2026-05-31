@@ -1,0 +1,65 @@
+<!-- WEEKLY WINNERS WIDGET - Social Proof & FOMO Driver -->
+<div class="winners-widget" id="weeklyWinnersWidget">
+  <div class="winners-title">
+    <span>🏆</span>
+    WEEKLY WINNERS
+  </div>
+
+  <div class="winners-list" id="winnersList">
+    <div class="winner-item">
+      <div class="winner-badge">🥇</div>
+      <div class="winner-info">
+        <div class="winner-name">Rajesh K.</div>
+        <div class="winner-stats">
+          <span>12 Referrals</span>
+          <span>₹15,000</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="winner-item">
+      <div class="winner-badge">🥈</div>
+      <div class="winner-info">
+        <div class="winner-name">Priya S.</div>
+        <div class="winner-stats">
+          <span>8 Referrals</span>
+          <span>₹10,000</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="winner-item">
+      <div class="winner-badge">🥉</div>
+      <div class="winner-info">
+        <div class="winner-name">Amit P.</div>
+        <div class="winner-stats">
+          <span>6 Referrals</span>
+          <span>₹5,000</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="winners-footer">
+    <a class="winners-link" onclick="viewFullLeaderboard()">View Full Leaderboard →</a>
+  </div>
+</div>
+
+<script>
+function viewFullLeaderboard() {
+  alert(`🏆 TOP REFERRERS THIS MONTH\n\n` +
+    `This week's top performers are shown above.\n\n` +
+    `Every referral counts! Keep referring your friends\n` +
+    `and you could be next week's winner.\n\n` +
+    `💰 Payouts every Thursday at 3:30 PM IST`);
+}
+
+// Load actual winner data from backend (when available)
+function loadWeeklyWinners() {
+  // TODO: Fetch from backend when API is ready
+  // For now, using hardcoded data above
+  console.log('Weekly winners loaded');
+}
+
+document.addEventListener('DOMContentLoaded', loadWeeklyWinners);
+</script>

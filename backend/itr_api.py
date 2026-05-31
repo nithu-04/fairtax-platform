@@ -7,6 +7,9 @@ from flask import Blueprint, request, jsonify
 from itr_extractor import ITRDocumentProcessor
 import os
 from datetime import datetime
+import storage_service
+import sheets_service
+from werkzeug.utils import secure_filename
 
 itr_bp = Blueprint('itr', __name__, url_prefix='/api/itr')
 
@@ -97,7 +100,8 @@ def extract_itr_data():
 
         # Get document type from request (default to form16)
         doc_type = request.form.get('doc_type', 'form16').lower().strip()
-        print(f"[ITR_EXTRACT] Document type: {doc_type}")
+        submission_id = request.form.get('submission_id', '')
+        print(f"[ITR_EXTRACT] Document type: {doc_type}, submission_id: {submission_id}")
 
         # Validate doc_type
         supported_doc_types = {'form16', 'payslip', 'homeloan', 'school', 'nps', 'insurance', 'donation'}
@@ -110,6 +114,7 @@ def extract_itr_data():
 
         # Process EACH file separately (not combined)
         all_results = []
+        processed_files = []  # Track files for storage
         for file in files:
             if file.filename == '':
                 continue
@@ -121,6 +126,7 @@ def extract_itr_data():
 
             # Read file bytes
             file_bytes = file.read()
+            file.seek(0)  # Reset for potential re-use
 
             # Check file size (max 50MB)
             if len(file_bytes) > 50 * 1024 * 1024:
@@ -184,8 +190,17 @@ def extract_itr_data():
                     print(f"[ITR_EXTRACT] {file.filename} detected as: {best_doc_type} (confidence: {best_confidence})")
                     result = best_result
                     result["auto_detected_doc_type"] = best_doc_type
+                    doc_type = best_doc_type  # Update for storage
 
             all_results.append(result)
+
+            # Track file for storage (if processing succeeded)
+            if result.get('success'):
+                processed_files.append({
+                    'file_obj': file,
+                    'filename': file.filename,
+                    'doc_type': result.get("auto_detected_doc_type", doc_type)
+                })
 
         # If no files were successfully processed
         if not all_results:
@@ -228,6 +243,56 @@ def extract_itr_data():
                 'confidence': merged_confidence,
                 'metadata': merged_metadata
             }
+
+        # ═══════════════════════════════════════════════════════════
+        # SAVE DOCUMENTS TO DISK AND GOOGLE SHEETS
+        # ═══════════════════════════════════════════════════════════
+        urls = []
+        if processed_files and submission_id and result.get('success'):
+            # Document type mapping for Sheets columns
+            doc_type_col_map = {
+                'form16': 'doc_form16_urls',
+                'payslip': 'doc_payslip_urls',
+                'homeloan': 'doc_homeloan_urls',
+                'school': 'doc_school_urls',
+                'nps': 'doc_nps_urls',
+                'insurance': 'doc_insurance_urls',
+                'donation': 'doc_donation_urls'
+            }
+
+            # Group files by doc_type
+            files_by_type = {}
+            for file_info in processed_files:
+                dt = file_info['doc_type']
+                if dt not in files_by_type:
+                    files_by_type[dt] = []
+                files_by_type[dt].append(file_info)
+
+            # Save each file and collect URLs
+            for doc_type_key, file_list in files_by_type.items():
+                type_urls = []
+                for file_info in file_list:
+                    try:
+                        file_obj = file_info['file_obj']
+                        url = storage_service.save_file(file_obj, submission_id)
+                        if url:
+                            type_urls.append(url)
+                            urls.append(url)
+                            print(f"[ITR_EXTRACT] Saved {file_info['filename']} -> {url}")
+                    except Exception as e:
+                        print(f"[ITR_EXTRACT] Error saving file {file_info['filename']}: {e}")
+
+                # Save URLs to Google Sheets
+                if type_urls:
+                    col_name = doc_type_col_map.get(doc_type_key, 'doc_form16_urls')
+                    try:
+                        sheets_service.append_doc_urls(submission_id, col_name, type_urls)
+                        print(f"[ITR_EXTRACT] Saved {len(type_urls)} URLs to {col_name}")
+                    except Exception as e:
+                        print(f"[ITR_EXTRACT] Error saving URLs to Sheets: {e}")
+
+            # Include URLs in result
+            result['urls'] = urls
 
         elapsed = time.time() - start_time
         if result['success']:
