@@ -553,20 +553,25 @@ def extract():
         # PARALLEL: Vision-based extraction pipeline (optimized)
         # ═══════════════════════════════════════════════════════════
 
-        def _extract_single_document(f):
-            """Extract data from a single document. Returns (url, extracted_data, error)."""
+        def _extract_single_document(file_data):
+            """Extract data from a single document. Returns (url, extracted_data, error).
+
+            Args:
+                file_data: Tuple of (filename, content, mime) to avoid file object threading issues
+            """
+            filename, content, mime = file_data
             try:
-                content = f.read()
-                mime = f.mimetype or "image/png"
+                # Store file (reconstruct temporary file object for storage_service)
+                # Note: We already read the content, so we use it directly
+                from io import BytesIO
+                temp_file = BytesIO(content)
+                temp_file.filename = filename
+                temp_file.mimetype = mime
 
-                # CRITICAL: Seek back to beginning BEFORE saving file
-                f.seek(0)
-
-                # Store file
-                url = storage_service.save_file(f, submission_id)
+                url = storage_service.save_file(temp_file, submission_id)
 
                 # Process with Vision extraction pipeline
-                print(f"[EXTRACT] Processing {f.filename} ({mime}) as doc_type='{doc_type}' with Vision pipeline...")
+                print(f"[EXTRACT] Processing {filename} ({mime}) as doc_type='{doc_type}' with Vision pipeline...")
                 result = document_processor.process_documents(content, mime, doc_type)
 
                 # AUTO-DETECTION: Only when confidence is very low AND document is small
@@ -612,7 +617,7 @@ def extract():
                 # Fail fast: if Vision extraction fails, return error
                 if not result["success"]:
                     print(f"[EXTRACT] Vision extraction failed: {result['error']}")
-                    suggestion = doc_type_detector.suggest_correct_doc_type(detected_doc_type, f.filename, {})
+                    suggestion = doc_type_detector.suggest_correct_doc_type(detected_doc_type, filename, {})
                     error_msg = result["error"]
                     if suggestion.get("should_retry"):
                         error_msg += f" (Hint: Try re-uploading as {suggestion['suggested_type']})"
@@ -620,7 +625,7 @@ def extract():
 
                 # Extract normalized data
                 extracted_data = result["data"]
-                extracted_data["_source_filename"] = f.filename
+                extracted_data["_source_filename"] = filename
                 extracted_data["_doc_type"] = detected_doc_type
                 extracted_data["_confidence"] = result["confidence"]
                 extracted_data["_metadata"] = result["metadata"]
@@ -629,19 +634,26 @@ def extract():
                 if "auto_detected_doc_type" in result:
                     extracted_data["_auto_detected_doc_type"] = result["auto_detected_doc_type"]
 
-                print(f"[EXTRACT] {f.filename}: confidence={result['confidence']}, "
+                print(f"[EXTRACT] {filename}: confidence={result['confidence']}, "
                       f"pages={result['metadata'].get('pages_processed', 1)}")
 
                 return (url, extracted_data, None)
 
             except Exception as e:
-                print(f"[EXTRACT] Exception processing {f.filename}: {str(e)}")
+                print(f"[EXTRACT] Exception processing {filename}: {str(e)}")
                 return (None, None, str(e))
 
         # PARALLEL EXTRACTION: Process all files concurrently
+        # Read all file contents FIRST to avoid file object threading issues
+        file_data_list = []
+        for f in files:
+            content = f.read()
+            mime = f.mimetype or "image/png"
+            file_data_list.append((f.filename, content, mime))
+
         results = []
-        with ThreadPoolExecutor(max_workers=min(4, len(files))) as executor:
-            results = list(executor.map(_extract_single_document, files))
+        with ThreadPoolExecutor(max_workers=min(4, len(file_data_list))) as executor:
+            results = list(executor.map(_extract_single_document, file_data_list))
 
         # Collect results and check for errors
         for url, extracted_data, error in results:
