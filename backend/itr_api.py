@@ -112,9 +112,97 @@ def extract_itr_data():
                 'data': {},
             }), 400
 
-        # Process EACH file separately (not combined)
-        all_results = []
-        processed_files = []  # Track files for storage
+        # ═══════════════════════════════════════════════════════════
+        # PARALLEL EXTRACTION: Process files concurrently (OPTIMIZED)
+        # ═══════════════════════════════════════════════════════════
+        from concurrent.futures import ThreadPoolExecutor
+        from io import BytesIO
+
+        def _process_single_file(file_data):
+            """Process a single file. Returns (filename, result, processed_file_info)."""
+            filename, file_bytes, file_obj = file_data
+
+            try:
+                # Check file size
+                if len(file_bytes) > 50 * 1024 * 1024:
+                    print(f"[ITR_EXTRACT] File too large: {filename} ({len(file_bytes) / 1024 / 1024:.2f}MB)")
+                    return (filename, {
+                        'success': False,
+                        'error': 'File too large (max 50MB)',
+                        'data': {},
+                        'filename': filename
+                    }, None)
+
+                # Process document with specified doc_type
+                file_start = time.time()
+                result = processor.process_file(file_bytes, filename, doc_type=doc_type)
+                file_elapsed = time.time() - file_start
+                print(f"[ITR_EXTRACT] {filename}: {file_elapsed:.2f}s, success={result.get('success')}")
+
+                detected_doc_type = doc_type
+
+                # AUTO-DETECTION: Only when confidence is very low AND document is small
+                conf = result.get("confidence", 0)
+                pages = result.get("metadata", {}).get("pages_processed", 1)
+
+                # OPTIMIZATION: Skip auto-detection if initial extraction was slow (> 15s)
+                if file_elapsed > 15:
+                    print(f"[ITR_EXTRACT] Skipping auto-detection for {filename}: initial extraction took {file_elapsed:.1f}s")
+                elif conf < 0.3 and pages <= 10:
+                    print(f"[ITR_EXTRACT] Auto-detecting {filename}: confidence={conf}, pages={pages}")
+
+                    best_result = result
+                    best_confidence = conf
+                    best_doc_type = doc_type
+
+                    # OPTIMIZATION: Try only 3 most likely types (not 7!)
+                    likely_types = ["form16", "payslip", "homeloan"]
+                    for test_type in likely_types:
+                        if test_type == doc_type:
+                            continue
+                        try:
+                            test_result = processor.process_file(file_bytes, filename, doc_type=test_type)
+                            test_confidence = test_result.get("confidence", 0)
+
+                            print(f"[ITR_EXTRACT] {filename} as {test_type}: confidence={test_confidence}")
+
+                            if test_confidence > best_confidence:
+                                best_result = test_result
+                                best_confidence = test_confidence
+                                best_doc_type = test_type
+
+                        except Exception as e:
+                            print(f"[ITR_EXTRACT] Error trying {test_type} on {filename}: {str(e)}")
+                            continue
+
+                    if best_doc_type != doc_type:
+                        print(f"[ITR_EXTRACT] {filename} detected as: {best_doc_type} (confidence: {best_confidence})")
+                        result = best_result
+                        result["auto_detected_doc_type"] = best_doc_type
+                        detected_doc_type = best_doc_type
+
+                # Track file for storage (if processing succeeded)
+                processed_file_info = None
+                if result.get('success'):
+                    processed_file_info = {
+                        'file_obj': file_obj,
+                        'filename': filename,
+                        'doc_type': detected_doc_type
+                    }
+
+                return (filename, result, processed_file_info)
+
+            except Exception as file_error:
+                print(f"[ITR_EXTRACT] {filename}: ERROR: {str(file_error)}")
+                return (filename, {
+                    'success': False,
+                    'error': f'Processing error: {str(file_error)}',
+                    'data': {},
+                    'filename': filename
+                }, None)
+
+        # Prepare files for parallel processing
+        file_data_list = []
         for file in files:
             if file.filename == '':
                 continue
@@ -126,81 +214,17 @@ def extract_itr_data():
 
             # Read file bytes
             file_bytes = file.read()
-            file.seek(0)  # Reset for potential re-use
+            file.seek(0)
+            file_data_list.append((file.filename, file_bytes, file))
 
-            # Check file size (max 50MB)
-            if len(file_bytes) > 50 * 1024 * 1024:
-                print(f"[ITR_EXTRACT] File too large: {file.filename} ({len(file_bytes) / 1024 / 1024:.2f}MB)")
-                all_results.append({
-                    'success': False,
-                    'error': 'File too large (max 50MB)',
-                    'data': {},
-                    'filename': file.filename
-                })
-                continue
-
-            # Process document with specified doc_type (with timeout)
-            try:
-                file_start = time.time()
-                result = processor.process_file(file_bytes, file.filename, doc_type=doc_type)
-                file_elapsed = time.time() - file_start
-                print(f"[ITR_EXTRACT] {file.filename}: {file_elapsed:.2f}s, success={result.get('success')}")
-            except Exception as file_error:
-                file_elapsed = time.time() - file_start
-                print(f"[ITR_EXTRACT] {file.filename}: ERROR after {file_elapsed:.2f}s: {str(file_error)}")
-                all_results.append({
-                    'success': False,
-                    'error': f'Processing error: {str(file_error)}',
-                    'data': {},
-                    'filename': file.filename
-                })
-                continue
-
-            # AUTO-DETECTION: Only when confidence is very low AND document is small
-            # (don't re-process large PDFs with every doc type — too expensive)
-            conf = result.get("confidence", 0)
-            pages = result.get("metadata", {}).get("pages_processed", 1)
-
-            if conf < 0.3 and pages <= 10:
-                print(f"[ITR_EXTRACT] Auto-detecting {file.filename}: confidence={conf}, pages={pages}")
-
-                best_result = result
-                best_confidence = conf
-                best_doc_type = doc_type
-
-                for test_type in ["form16", "payslip", "homeloan", "school", "nps", "insurance", "donation"]:
-                    if test_type == doc_type:
-                        continue
-                    try:
-                        test_result = processor.process_file(file_bytes, file.filename, doc_type=test_type)
-                        test_confidence = test_result.get("confidence", 0)
-
-                        print(f"[ITR_EXTRACT] {file.filename} as {test_type}: confidence={test_confidence}")
-
-                        if test_confidence > best_confidence:
-                            best_result = test_result
-                            best_confidence = test_confidence
-                            best_doc_type = test_type
-
-                    except Exception as e:
-                        print(f"[ITR_EXTRACT] Error trying {test_type} on {file.filename}: {str(e)}")
-                        continue
-
-                if best_doc_type != doc_type:
-                    print(f"[ITR_EXTRACT] {file.filename} detected as: {best_doc_type} (confidence: {best_confidence})")
-                    result = best_result
-                    result["auto_detected_doc_type"] = best_doc_type
-                    doc_type = best_doc_type  # Update for storage
-
-            all_results.append(result)
-
-            # Track file for storage (if processing succeeded)
-            if result.get('success'):
-                processed_files.append({
-                    'file_obj': file,
-                    'filename': file.filename,
-                    'doc_type': result.get("auto_detected_doc_type", doc_type)
-                })
+        # Process files in PARALLEL
+        all_results = []
+        processed_files = []
+        with ThreadPoolExecutor(max_workers=min(4, len(file_data_list))) as executor:
+            for filename, result, processed_file_info in executor.map(_process_single_file, file_data_list):
+                all_results.append(result)
+                if processed_file_info:
+                    processed_files.append(processed_file_info)
 
         # If no files were successfully processed
         if not all_results:
