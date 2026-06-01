@@ -660,9 +660,16 @@ def save_calculation_by_row(row, calc):
         except:
             return 0.0
 
+    # Collect all updates for batch processing (optimization)
+    batch_updates = []
+
     def set_cell(field, value):
         if field in col_map:
-            _ws_call(ws, 'update_cell', row, col_map[field], value)
+            # Add to batch instead of immediate update
+            batch_updates.append({
+                "range": gspread.utils.rowcol_to_a1(row, col_map[field]),
+                "values": [[value]]
+            })
 
     def extract_numeric(calc, *paths):
         """Extract numeric value from nested dict using multiple fallback paths."""
@@ -743,6 +750,10 @@ def save_calculation_by_row(row, calc):
     # Always keep approval_status = PENDING (auditor must explicitly approve)
     set_cell("approval_status", "PENDING")
 
+    # BATCH UPDATE: Execute all collected updates in a single API call (optimization)
+    if batch_updates:
+        _ws_call(ws, 'batch_update', batch_updates, value_input_option="USER_ENTERED")
+
 
 def update_row(row, data):
     if not row:
@@ -760,6 +771,7 @@ def update_row(row, data):
 
     updated_fields = []
     skipped_fields = []
+    batch_updates = []  # Collect updates for batch processing (optimization)
 
     for k, v in data.items():
         if k in col_map:
@@ -771,12 +783,23 @@ def update_row(row, data):
                 skipped_fields.append(f"{k}=empty_string")
                 continue
             try:
-                _ws_call(ws, 'update_cell', row, col_map[k], v)
+                # Add to batch instead of immediate update
+                batch_updates.append({
+                    "range": gspread.utils.rowcol_to_a1(row, col_map[k]),
+                    "values": [[v]]
+                })
                 updated_fields.append(k)
             except Exception as e:
-                print(f"[SHEETS] Error updating {k}: {e}")
+                print(f"[SHEETS] Error preparing update for {k}: {e}")
         else:
             skipped_fields.append(f"{k}=not_in_col_map")
+
+    # BATCH UPDATE: Execute all collected updates in a single API call (optimization)
+    if batch_updates:
+        try:
+            _ws_call(ws, 'batch_update', batch_updates, value_input_option="USER_ENTERED")
+        except Exception as e:
+            print(f"[SHEETS] Error executing batch update in update_row: {e}")
 
     if updated_fields or skipped_fields:
         print(f"[SHEETS] update_row: Updated {len(updated_fields)} fields: {updated_fields[:5]}")
