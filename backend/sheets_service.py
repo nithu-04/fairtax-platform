@@ -68,9 +68,6 @@ HEADERS = [
     "variant_a_refund", "variant_a_regime",
     "variant_b_refund", "variant_c_refund",
 
-    # Combined results (formulas)
-    "regime_comparison", "quotes_comparison",
-
     # Auditor workflow
     "approval_status", "auditor_quote_fee", "auditor_notes", "user_chosen_option",
     "payment_status", "filing_status",
@@ -78,6 +75,9 @@ HEADERS = [
     # Document URLs (last columns)
     "doc_form16_urls", "doc_payslip_urls", "doc_homeloan_urls",
     "doc_school_urls", "doc_nps_urls", "doc_insurance_urls", "doc_donation_urls",
+
+    # Combined results (formulas) - APPENDED AT END
+    "regime_comparison", "quotes_comparison",
 ]
 
 def _client():

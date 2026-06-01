@@ -571,15 +571,17 @@ def extract():
             conf = result.get("confidence", 0)
             pages = result["metadata"].get("pages_processed", 1)
 
-            if conf < 0.3 and pages <= 10:
-                print(f"[EXTRACT] Auto-detecting: confidence={conf}, pages={pages}. Trying all document types...")
+            if conf < 0.5 and pages <= 10:
+                print(f"[EXTRACT] Auto-detecting: confidence={conf}, pages={pages}. Trying 3 most likely document types...")
 
                 best_result = result
                 best_confidence = result.get("confidence", 0)
                 best_doc_type = doc_type
 
-                # Try each document type and keep the one with highest confidence
-                for test_type in ["form16", "payslip", "homeloan", "school", "nps", "insurance", "donation"]:
+                # Try only 3 most likely document types (reduced from 7 for performance)
+                # Priority: form16 (most common) → payslip → homeloan
+                likely_types = ["form16", "payslip", "homeloan"]
+                for test_type in likely_types:
                     if test_type == doc_type:
                         continue  # Skip the current type, we already have that result
                     try:
