@@ -42,8 +42,12 @@ def _try_text_extraction(file_bytes, doc_type):
             num_pages = max(len(pages_text), 1)
             avg_chars = len(full_text.replace(" ", "").replace("\n", "")) / num_pages
 
-            if avg_chars < _TEXT_FAST_PATH_MIN_CHARS:
-                print(f"[DOC_PROCESSOR][TEXT_FAST] avg {avg_chars:.0f} chars/page — too low, falling back to Vision")
+            # For payslips, accept LOWER quality text (they're highly structured)
+            # For others, use standard threshold
+            min_chars_threshold = 75 if doc_type == "payslip" else _TEXT_FAST_PATH_MIN_CHARS
+
+            if avg_chars < min_chars_threshold:
+                print(f"[DOC_PROCESSOR][TEXT_FAST] avg {avg_chars:.0f} chars/page — below threshold {min_chars_threshold}, falling back to Vision")
                 return None
 
             print(f"[DOC_PROCESSOR][TEXT_FAST] Digital PDF detected ({avg_chars:.0f} chars/page). Using text extraction.")
