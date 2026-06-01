@@ -68,6 +68,9 @@ HEADERS = [
     "variant_a_refund", "variant_a_regime",
     "variant_b_refund", "variant_c_refund",
 
+    # Combined results (formulas)
+    "regime_comparison", "quotes_comparison",
+
     # Auditor workflow
     "approval_status", "auditor_quote_fee", "auditor_notes", "user_chosen_option",
     "payment_status", "filing_status",
@@ -719,6 +722,10 @@ def save_calculation_by_row(row, calc):
     set_cell("variant_a_regime", extract_string(calc, "variant_options.variant_a.regime", "variant_a_regime", "compatibility_summary.variant_a_regime"))
     set_cell("variant_b_refund", extract_numeric(calc, "variant_options.variant_b.refund", "variant_b_refund", "compatibility_summary.variant_b_refund"))
     set_cell("variant_c_refund", extract_numeric(calc, "variant_options.variant_c.refund", "variant_c_refund", "compatibility_summary.variant_c_refund"))
+
+    # Combined formulas (Regime Comparison + Quotes Comparison)
+    set_cell("regime_comparison", f'="Old Regime: "&CF{row}&" | New Regime: "&BV{row}')
+    set_cell("quotes_comparison", f'="Quote 1: "&CF{row}&" | Quote 2: "&CH{row}&" | Quote 3: "&CI{row}')
 
     # Deductions
     set_cell("sec_80c", extract_numeric(calc, "deductions_80.sec_80c", "sec_80c", "compatibility_summary.sec_80c"))
