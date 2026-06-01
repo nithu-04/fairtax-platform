@@ -7,6 +7,7 @@ from pdf_service import generate_quote_pdf
 from services import document_processor, quality_checker, doc_type_detector
 from extraction_validator import ExtractionValidator
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging for both console and file (for Waitress visibility)
 logging.basicConfig(
@@ -549,92 +550,111 @@ def extract():
         urls, extractions = [], []
 
         # ═══════════════════════════════════════════════════════════
-        # NEW: Vision-based extraction pipeline
+        # PARALLEL: Vision-based extraction pipeline (optimized)
         # ═══════════════════════════════════════════════════════════
-        for f in files:
-            content = f.read()
-            mime = f.mimetype or "image/png"
 
-            # CRITICAL: Seek back to beginning BEFORE saving file
-            f.seek(0)
+        def _extract_single_document(f):
+            """Extract data from a single document. Returns (url, extracted_data, error)."""
+            try:
+                content = f.read()
+                mime = f.mimetype or "image/png"
 
-            # Store file
-            url = storage_service.save_file(f, submission_id)
-            if url:
-                urls.append(url)
+                # CRITICAL: Seek back to beginning BEFORE saving file
+                f.seek(0)
 
-            # Process with Vision extraction pipeline
-            print(f"[EXTRACT] Processing {f.filename} ({mime}) as doc_type='{doc_type}' with Vision pipeline...")
-            result = document_processor.process_documents(content, mime, doc_type)
+                # Store file
+                url = storage_service.save_file(f, submission_id)
 
-            # AUTO-DETECTION: Only when confidence is very low AND document is small
-            conf = result.get("confidence", 0)
-            pages = result["metadata"].get("pages_processed", 1)
+                # Process with Vision extraction pipeline
+                print(f"[EXTRACT] Processing {f.filename} ({mime}) as doc_type='{doc_type}' with Vision pipeline...")
+                result = document_processor.process_documents(content, mime, doc_type)
 
-            if conf < 0.5 and pages <= 10:
-                print(f"[EXTRACT] Auto-detecting: confidence={conf}, pages={pages}. Trying 3 most likely document types...")
+                # AUTO-DETECTION: Only when confidence is very low AND document is small
+                conf = result.get("confidence", 0)
+                pages = result["metadata"].get("pages_processed", 1)
+                detected_doc_type = doc_type
 
-                best_result = result
-                best_confidence = result.get("confidence", 0)
-                best_doc_type = doc_type
+                if conf < 0.5 and pages <= 10:
+                    print(f"[EXTRACT] Auto-detecting: confidence={conf}, pages={pages}. Trying 3 most likely document types...")
 
-                # Try only 3 most likely document types (reduced from 7 for performance)
-                # Priority: form16 (most common) → payslip → homeloan
-                likely_types = ["form16", "payslip", "homeloan"]
-                for test_type in likely_types:
-                    if test_type == doc_type:
-                        continue  # Skip the current type, we already have that result
-                    try:
-                        test_result = document_processor.process_documents(content, mime, test_type)
-                        test_confidence = test_result.get("confidence", 0)
+                    best_result = result
+                    best_confidence = result.get("confidence", 0)
+                    best_doc_type = doc_type
 
-                        print(f"[EXTRACT] Tried {test_type}: confidence={test_confidence}")
+                    # Try only 3 most likely document types (reduced from 7 for performance)
+                    # Priority: form16 (most common) → payslip → homeloan
+                    likely_types = ["form16", "payslip", "homeloan"]
+                    for test_type in likely_types:
+                        if test_type == doc_type:
+                            continue  # Skip the current type, we already have that result
+                        try:
+                            test_result = document_processor.process_documents(content, mime, test_type)
+                            test_confidence = test_result.get("confidence", 0)
 
-                        if test_confidence > best_confidence:
-                            best_result = test_result
-                            best_confidence = test_confidence
-                            best_doc_type = test_type
+                            print(f"[EXTRACT] Tried {test_type}: confidence={test_confidence}")
 
-                    except Exception as e:
-                        print(f"[EXTRACT] Error trying {test_type}: {str(e)}")
-                        continue
+                            if test_confidence > best_confidence:
+                                best_result = test_result
+                                best_confidence = test_confidence
+                                best_doc_type = test_type
 
-                # If we found a better match, use it
-                if best_doc_type != doc_type:
-                    print(f"[EXTRACT] DETECTED DOCUMENT TYPE: {best_doc_type} (confidence: {best_confidence})")
-                    result = best_result
-                    result["auto_detected_doc_type"] = best_doc_type
-                    doc_type = best_doc_type  # Update doc_type for downstream processing
+                        except Exception as e:
+                            print(f"[EXTRACT] Error trying {test_type}: {str(e)}")
+                            continue
 
-            # Fail fast: if Vision extraction fails, return error to user
-            if not result["success"]:
-                print(f"[EXTRACT] Vision extraction failed: {result['error']}")
-                # Try to suggest correct doc type
-                suggestion = doc_type_detector.suggest_correct_doc_type(doc_type, f.filename, {})
-                error_msg = result["error"]
-                if suggestion.get("should_retry"):
-                    error_msg += f" (Hint: Try re-uploading as {suggestion['suggested_type']})"
+                    # If we found a better match, use it
+                    if best_doc_type != doc_type:
+                        print(f"[EXTRACT] DETECTED DOCUMENT TYPE: {best_doc_type} (confidence: {best_confidence})")
+                        result = best_result
+                        result["auto_detected_doc_type"] = best_doc_type
+                        detected_doc_type = best_doc_type
 
+                # Fail fast: if Vision extraction fails, return error
+                if not result["success"]:
+                    print(f"[EXTRACT] Vision extraction failed: {result['error']}")
+                    suggestion = doc_type_detector.suggest_correct_doc_type(detected_doc_type, f.filename, {})
+                    error_msg = result["error"]
+                    if suggestion.get("should_retry"):
+                        error_msg += f" (Hint: Try re-uploading as {suggestion['suggested_type']})"
+                    return (None, None, error_msg)
+
+                # Extract normalized data
+                extracted_data = result["data"]
+                extracted_data["_source_filename"] = f.filename
+                extracted_data["_doc_type"] = detected_doc_type
+                extracted_data["_confidence"] = result["confidence"]
+                extracted_data["_metadata"] = result["metadata"]
+
+                # Preserve auto-detected doc type if it was detected
+                if "auto_detected_doc_type" in result:
+                    extracted_data["_auto_detected_doc_type"] = result["auto_detected_doc_type"]
+
+                print(f"[EXTRACT] {f.filename}: confidence={result['confidence']}, "
+                      f"pages={result['metadata'].get('pages_processed', 1)}")
+
+                return (url, extracted_data, None)
+
+            except Exception as e:
+                print(f"[EXTRACT] Exception processing {f.filename}: {str(e)}")
+                return (None, None, str(e))
+
+        # PARALLEL EXTRACTION: Process all files concurrently
+        results = []
+        with ThreadPoolExecutor(max_workers=min(4, len(files))) as executor:
+            results = list(executor.map(_extract_single_document, files))
+
+        # Collect results and check for errors
+        for url, extracted_data, error in results:
+            if error:
+                print(f"[EXTRACT] Document extraction error: {error}")
                 return jsonify({
                     "success": False,
-                    "error": error_msg
+                    "error": error
                 }), 400
-
-            # Extract normalized data from PASS 1
-            extracted_data = result["data"]
-            extracted_data["_source_filename"] = f.filename
-            extracted_data["_doc_type"] = doc_type
-            extracted_data["_confidence"] = result["confidence"]
-            extracted_data["_metadata"] = result["metadata"]
-
-            # Preserve auto-detected doc type if it was detected
-            if "auto_detected_doc_type" in result:
-                extracted_data["_auto_detected_doc_type"] = result["auto_detected_doc_type"]
-
-            extractions.append(extracted_data)
-
-            print(f"[EXTRACT] {f.filename}: confidence={result['confidence']}, "
-                  f"pages={result['metadata'].get('pages_processed', 1)}")
+            if url:
+                urls.append(url)
+            if extracted_data:
+                extractions.append(extracted_data)
 
         # Merge multiple documents if applicable (existing logic)
         merged = ai_service.merge_extractions(extractions)
