@@ -1,0 +1,160 @@
+[
+  {
+    "file": "backend/tax_engine.py",
+    "line": 94,
+    "severity": "CRITICAL",
+    "summary": "Surcharge not applied at exact threshold income",
+    "code_issue": "if total_income > th: rate = r",
+    "problem": "Uses > instead of >=. Income at exactly 50L (5000000) does not trigger 10% surcharge. Should trigger when income >= threshold.",
+    "failure_scenario": "For income=5000000 (exactly 50L), surcharge_rate should be 0.10 but returns 0.0",
+    "impact": "Taxpayers with income at surcharge thresholds (5L, 10L, 20L, 50L+) pay less surcharge than required by Indian tax law",
+    "fix": "Change line 94 from '> th' to '>= th'"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 59,
+    "severity": "CRITICAL",
+    "summary": "Rebate logic subtracts cap instead of applying it as limit",
+    "code_issue": "tax = max(0.0, raw - cap)",
+    "problem": "Subtracts the rebate cap from raw tax instead of capping raw tax at cap. Formula should be max(0, min(raw, cap)) to apply rebate correctly.",
+    "failure_scenario": "For taxable_income=499000 (below 5L threshold), raw_tax=9950. Current logic gives 9950-12500=-2500→0. Should give min(9950,12500)=9950 tax (full 9950 paid, no rebate).",
+    "expected": "When raw tax < cap, full tax should be paid. When raw tax >= cap, cap should be rebated.",
+    "actual": "Rebate is subtracted from raw tax, causing incorrect amounts or complete elimination when cap > raw tax",
+    "impact": "Taxpayers below rebate threshold pay less tax than entitled. For 499k income pays 0 instead of 9950 in OLD regime",
+    "fix": "Change line 59 from 'raw - cap' to 'min(raw, cap)' or better: implement as full rebate elimination (tax = 0 if below threshold) or partial rebate capping"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 58,
+    "severity": "CRITICAL",
+    "summary": "Rebate applied above threshold (marginal relief cap not working)",
+    "code_issue": "if threshold is not None and taxable <= threshold:",
+    "problem": "Rebate applies correctly when <= threshold, but for income just above threshold, marginal relief logic (lines 60-64) is incorrectly applying rebate. Line 63 checks 'if tax > (taxable - threshold)' which becomes a rebate application.",
+    "failure_scenario": "For taxable=500001 (1 above threshold), raw_tax=10000.05, after rebate=0.0. With marginal relief, tax should be capped at (500001-500000)=1, so tax should be min(10000.05, 1)=1. But it shows 0.",
+    "expected": "Marginal relief: tax should not exceed (taxable_income - threshold). For 500k+1: tax capped at 1.",
+    "actual": "Tax shows as 0 (rebate applied incorrectly above threshold)",
+    "impact": "Taxpayers at threshold get undeserved full rebate instead of marginal relief cap",
+    "fix": "Logic at line 63-64 needs correction: should cap tax at marginal relief, not trigger rebate again"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 53-64,
+    "severity": "HIGH",
+    "summary": "Rebate threshold interpretation unclear/incorrect",
+    "code_issue": "Rebate logic uses 'taxable' but surcharge uses 'total_income'",
+    "problem": "Rebate is applied based on taxable_income (after deductions) while surcharge is applied based on total_income (GTI). Indian tax law typically applies rebates on total_income. Need to verify if this is intentional.",
+    "failure_scenario": "A taxpayer with high deductions could have low taxable income but high total income, getting rebate when shouldn't under law",
+    "impact": "Rebate may be applied to wrong income base",
+    "note": "Verify against actual IT rules which base should be used"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 155,
+    "severity": "HIGH",
+    "summary": "Standard deduction handling: GTI calculation uses wrong order",
+    "code_issue": "gti = gross + other_income - sec10_total - home_loan_interest - std_deduction - pt",
+    "problem": "Standard deduction is deducted in GTI calculation (line 155) BEFORE being passed to slab_tax. This is correct. However, the order and logic need verification against Indian tax rules.",
+    "note": "Actual review shows: std_deduction is correctly applied in GTI calculation (line 155 for OLD regime, line 276 for NEW regime). This appears correct.",
+    "status": "VERIFIED CORRECT"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 276,
+    "severity": "MEDIUM",
+    "summary": "NEW regime GTI calculation missing some exemptions",
+    "code_issue": "gti_new = gross + other_income - std_new",
+    "problem": "NEW regime GTI doesn't deduct home_loan_interest or professional_tax like OLD regime does. This may be intentional (NEW regime doesn't allow many deductions) but should be verified.",
+    "expected": "NEW regime generally doesn't allow exemptions like home loan interest. Only standard deduction.",
+    "note": "This appears CORRECT per NEW regime rules - NEW regime only allows standard deduction, no home loan interest exemption",
+    "status": "VERIFIED CORRECT"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 156,
+    "severity": "MEDIUM",
+    "summary": "Negative taxable income handling uses max(0, gti - deductions)",
+    "code_issue": "taxable = max(0, gti - deductions_total)",
+    "problem": "Correctly prevents negative taxable income. However, if GTI itself is negative (loss situation), it becomes 0 instead of carrying forward loss.",
+    "failure_scenario": "If gross_salary is negative (unlikely in normal use) or other_income has large losses, GTI could be negative. Code correctly clamps to 0.",
+    "status": "CORRECT - Properly handles edge case"
+  },
+  {
+    "file": "backend/tax_config.py",
+    "line": 16-20,
+    "severity": "MEDIUM",
+    "summary": "OLD regime slab limits may be incorrect",
+    "code_issue": "SLABS['OLD'] = [(250000, 0.0), (250000, 0.05), (500000, 0.20), (inf, 0.30)]",
+    "problem": "These represent chunk limits (not cumulative). Interpretation: 0-2.5L @ 0%, 2.5L-5L @ 5%, 5L-10L @ 20%, 10L+ @ 30%. Verify if these match FY 2025-26 rates.",
+    "verification": "For old regime: 0-250k @ 0%, 250k-500k @ 5%, 500k-1000k @ 20%, 1000k+ @ 30%. This matches Indian tax law for FY 2025-26.",
+    "status": "VERIFIED CORRECT"
+  },
+  {
+    "file": "backend/tax_config.py",
+    "line": 47-50,
+    "severity": "CRITICAL",
+    "summary": "Rebate threshold and cap values must be verified for FY 2025-26",
+    "code_issue": "REBATE = {'OLD': {'threshold': 500000, 'cap': 12500}, 'NEW': {'threshold': 1200000, 'cap': 60000}}",
+    "problem": "OLD rebate: threshold 5L with cap 12.5k (Section 87A). NEW rebate: threshold 12L with cap 60k. Caps appear to be full tax elimination amounts, not reduction percentages.",
+    "verification": "Section 87A (OLD regime): Full tax rebate for income up to 5L = max tax at 5L = 250k*0 + 250k*0.05 = 12,500. Correct. NEW regime: Full rebate up to 12L = needs verification of cap 60k.",
+    "note": "For NEW regime, max tax at 12L would be 400k*0 + 400k*0.05 + 400k*0.10 + 400k*0.15 + 400k*0.20 = 52,500. Cap of 60,000 seems intentional buffer.",
+    "status": "APPEARS CORRECT but NEW regime cap needs confirmation"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 103,
+    "severity": "MEDIUM",
+    "summary": "Cess applied to tax_after_surcharge (correct order)",
+    "code_issue": "cess_amount = round(tax_after_surcharge * tax_config.CESS_RATE, 2)",
+    "problem": "None - cess is correctly applied AFTER surcharge, which is correct per Indian tax law",
+    "status": "CORRECT"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 84-112,
+    "severity": "LOW",
+    "summary": "Surcharge band calculation inefficient and fragile",
+    "code_issue": "for th, r in tax_config.SURCHARGE_BANDS: if total_income > th: rate = r",
+    "problem": "Iterates through all bands and keeps overwriting rate with the highest matching band. Should break after finding the first match or use binary search. Current approach works but is inefficient and if bands are unordered, would fail.",
+    "recommendation": "Bands should be validated as ascending, or use clearer logic with explicit conditions",
+    "status": "WORKS BUT INEFFICIENT"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 190,
+    "severity": "LOW",
+    "summary": "Rent calculation: rent_paid uses monthly_rent * 12",
+    "code_issue": "rent_paid = (g('monthly_rent') or g('rent_paid')) * 12",
+    "problem": "If user provides 'rent_paid' (already annual), it gets multiplied by 12 again. Should check which field is provided first.",
+    "failure_scenario": "If g('monthly_rent') returns 0 and g('rent_paid') returns 120000 (annual), result becomes 1,200,000 instead of 120,000",
+    "fix": "Add logic to determine if field is monthly or annual, or ensure frontend sends consistent format"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 237-238,
+    "severity": "LOW",
+    "summary": "NPS deduction: Different caps for OLD (10%) vs NEW (14%) regime",
+    "code_issue": "sec_80ccd_2 = min(g('nps_employer'), 0.10 * basic) [OLD]\nsec_80ccd_2_new = min(g('nps_employer'), 0.14 * basic) [NEW]",
+    "problem": "OLD regime NPS is 10% of basic (Section 80CCD(2)). NEW regime allows 14%. This appears intentional but should verify.",
+    "note": "In NEW regime without 80C deductions, employer NPS contribution up to 14% of basic is allowed under Section 80CCD(2). OLD regime is 10% (since total 80C+80CCD is capped at 150k). This appears CORRECT.",
+    "status": "CORRECT"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 103-104,
+    "severity": "LOW",
+    "summary": "Rounding precision: surcharge and cess rounded to 2 decimals",
+    "code_issue": "round(tax_before_cess * rate, 2)",
+    "problem": "Rounding at each step can accumulate precision errors. Should consider using Decimal for financial calculations.",
+    "note": "Not critical for typical Indian rupee calculations, but best practice for financial software",
+    "status": "WORKS but not ideal for precision"
+  },
+  {
+    "file": "backend/tax_engine.py",
+    "line": 287-288,
+    "severity": "LOW",
+    "summary": "Variant A logic: Uses max refund (incorrect)",
+    "code_issue": "variant_a_refund = max(old_a['refund'], refund_new)\nvariant_a_regime = 'OLD' if old_a['refund'] >= refund_new else 'NEW'",
+    "problem": "Taking MAX refund is correct user benefit. Logic looks correct.",
+    "status": "CORRECT"
+  }
+]
