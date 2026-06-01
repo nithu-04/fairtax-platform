@@ -119,19 +119,22 @@ def calculate_hra_exemption(basic, hra_received, rent_paid, is_metro):
     hra_received = _num(hra_received)
     rent_paid = _num(rent_paid)
 
-    if rent_paid <= 0.10 * basic:
-        return 0
-
     percent = 0.5 if is_metro else 0.4
 
-    return max(
-        0,
-        min(
-            hra_received,
-            percent * basic,
-            rent_paid - 0.10 * basic
+    # If rent is provided and exceeds 10% of basic, use full formula
+    if rent_paid > 0.10 * basic:
+        return max(
+            0,
+            min(
+                hra_received,
+                percent * basic,
+                rent_paid - 0.10 * basic
+            )
         )
-    )
+    else:
+        # If rent NOT provided (or too low), use percentage-based limit only
+        # Per Rule 8: minimum of actual HRA and percentage of salary
+        return min(hra_received, percent * basic)
 
 
 # ================= VARIANT CONSTANTS =================
