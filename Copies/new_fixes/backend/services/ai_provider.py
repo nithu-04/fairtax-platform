@@ -73,9 +73,9 @@ def call_vision_model(image_bytes, prompt):
         # Encode image to base64
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
-        # Call OpenAI Vision API with GPT-4o
+        # Call OpenAI Vision API with configured model
         response = client.chat.completions.create(
-            model="gpt-4o",  # GPT-4o has vision capabilities
+            model=AI_MODEL,  # Use model from OPENAI_MODEL env var (gpt-4o-mini)
             messages=[
                 {
                     "role": "user",
