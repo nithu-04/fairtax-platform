@@ -26,7 +26,7 @@ class Config:
     MANYCHAT_PHONE_NUMBER = os.getenv("MANYCHAT_PHONE_NUMBER", "9600165254")
 
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
-    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:5000")
+    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://fairtax-backend.onrender.com")
 
     FLASK_SECRET = os.getenv("FLASK_SECRET", "dev")
     USE_AI = os.getenv("USE_AI", "1").lower() in ("1", "true", "yes")
