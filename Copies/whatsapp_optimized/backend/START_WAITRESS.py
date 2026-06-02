@@ -4,6 +4,9 @@ Start FairTax backend with Waitress WSGI server
 Production-ready server that works on Windows
 """
 
+# ===== CRITICAL: Import logging config FIRST (before app) =====
+import logging_config
+
 from waitress import serve
 from app import app
 import os

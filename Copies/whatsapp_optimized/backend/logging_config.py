@@ -4,17 +4,8 @@ import sys
 import io
 import os
 
-# ===== DIAGNOSTIC: Print early to verify import =====
-sys.stderr.write("[DEBUG] logging_config.py is being imported\n")
-sys.stderr.flush()
-
 # ===== Import monkey-patch FIRST =====
-try:
-    import disable_pdfplumber_debug
-    sys.stderr.write("[DEBUG] disable_pdfplumber_debug imported successfully\n")
-except Exception as e:
-    sys.stderr.write(f"[ERROR] Failed to import disable_pdfplumber_debug: {e}\n")
-    sys.stderr.flush()
+import disable_pdfplumber_debug
 
 # ===== STEP 1: Disable pdfplumber debug via environment BEFORE import =====
 os.environ['PDFPLUMBER_DEBUG'] = '0'
