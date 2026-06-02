@@ -293,7 +293,7 @@ def save_phase():
         })
 
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -528,9 +528,9 @@ def extract():
             try:
                 result = sheets_service.insert_submission({"submission_id": submission_id})
                 row = sheets_service.get_row_by_submission_id(submission_id)
-                print(f"[EXTRACT] Created new row for submission {submission_id}: row={row}")
+                logger.info(f"[INFO] EXTRACT] Created new row for submission {submission_id}: row={row}")
             except Exception as e:
-                print(f"[EXTRACT] Failed to create row for submission {submission_id}: {e}")
+                logger.info(f"[INFO] EXTRACT] Failed to create row for submission {submission_id}: {e}")
 
         urls, extractions = [], []
 
@@ -556,7 +556,7 @@ def extract():
                 url = storage_service.save_file(temp_file, submission_id)
 
                 # Process with Vision extraction pipeline
-                print(f"[EXTRACT] Processing {filename} ({mime}) as doc_type='{doc_type}' with Vision pipeline...")
+                logger.info(f"[INFO] EXTRACT] Processing {filename} ({mime}) as doc_type='{doc_type}' with Vision pipeline...")
                 result = document_processor.process_documents(content, mime, doc_type)
 
                 # AUTO-DETECTION: Only when confidence is very low AND document is small
@@ -565,7 +565,7 @@ def extract():
                 detected_doc_type = doc_type
 
                 if conf < 0.5 and pages <= 10:
-                    print(f"[EXTRACT] Auto-detecting: confidence={conf}, pages={pages}. Trying 3 most likely document types...")
+                    logger.info(f"[INFO] EXTRACT] Auto-detecting: confidence={conf}, pages={pages}. Trying 3 most likely document types...")
 
                     best_result = result
                     best_confidence = result.get("confidence", 0)
@@ -581,7 +581,7 @@ def extract():
                             test_result = document_processor.process_documents(content, mime, test_type)
                             test_confidence = test_result.get("confidence", 0)
 
-                            print(f"[EXTRACT] Tried {test_type}: confidence={test_confidence}")
+                            logger.info(f"[INFO] EXTRACT] Tried {test_type}: confidence={test_confidence}")
 
                             if test_confidence > best_confidence:
                                 best_result = test_result
@@ -589,19 +589,19 @@ def extract():
                                 best_doc_type = test_type
 
                         except Exception as e:
-                            print(f"[EXTRACT] Error trying {test_type}: {str(e)}")
+                            logger.info(f"[INFO] EXTRACT] Error trying {test_type}: {str(e)}")
                             continue
 
                     # If we found a better match, use it
                     if best_doc_type != doc_type:
-                        print(f"[EXTRACT] DETECTED DOCUMENT TYPE: {best_doc_type} (confidence: {best_confidence})")
+                        logger.info(f"[INFO] EXTRACT] DETECTED DOCUMENT TYPE: {best_doc_type} (confidence: {best_confidence})")
                         result = best_result
                         result["auto_detected_doc_type"] = best_doc_type
                         detected_doc_type = best_doc_type
 
                 # Fail fast: if Vision extraction fails, return error
                 if not result["success"]:
-                    print(f"[EXTRACT] Vision extraction failed: {result['error']}")
+                    logger.info(f"[INFO] EXTRACT] Vision extraction failed: {result['error']}")
                     suggestion = doc_type_detector.suggest_correct_doc_type(detected_doc_type, filename, {})
                     error_msg = result["error"]
                     if suggestion.get("should_retry"):
@@ -619,13 +619,13 @@ def extract():
                 if "auto_detected_doc_type" in result:
                     extracted_data["_auto_detected_doc_type"] = result["auto_detected_doc_type"]
 
-                print(f"[EXTRACT] {filename}: confidence={result['confidence']}, "
+                logger.info(f"[INFO] EXTRACT] {filename}: confidence={result['confidence']}, "
                       f"pages={result['metadata'].get('pages_processed', 1)}")
 
                 return (url, extracted_data, None)
 
             except Exception as e:
-                print(f"[EXTRACT] Exception processing {filename}: {str(e)}")
+                logger.info(f"[INFO] EXTRACT] Exception processing {filename}: {str(e)}")
                 return (None, None, str(e))
 
         # PARALLEL EXTRACTION: Process all files concurrently
@@ -643,7 +643,7 @@ def extract():
         # Collect results and check for errors
         for url, extracted_data, error in results:
             if error:
-                print(f"[EXTRACT] Document extraction error: {error}")
+                logger.info(f"[INFO] EXTRACT] Document extraction error: {error}")
                 return jsonify({
                     "success": False,
                     "error": error
@@ -658,7 +658,7 @@ def extract():
         conflicts = merged.pop('_merge_conflicts', [])
 
         if conflicts:
-            print(f"[EXTRACT][{doc_type}] conflicts detected: {conflicts}")
+            logger.info(f"[INFO] EXTRACT][{doc_type}] conflicts detected: {conflicts}")
 
         # [OK] VALIDATION LAYER: Comprehensive extraction validation
         # Validates annual/monthly consistency, Form 16 priority, document reconciliation, etc.
@@ -684,9 +684,9 @@ def extract():
             # Merge the new conflicts with existing ones
             if form16_payslip_conflicts:
                 conflicts.extend(form16_payslip_conflicts)
-                print(f"[EXTRACT] Form 16/Payslip conflicts: {len(form16_payslip_conflicts)}")
+                logger.info(f"[INFO] EXTRACT] Form 16/Payslip conflicts: {len(form16_payslip_conflicts)}")
         except Exception as e:
-            print(f"[EXTRACT] Form 16/Payslip validation failed (non-blocking): {e}")
+            logger.info(f"[INFO] EXTRACT] Form 16/Payslip validation failed (non-blocking): {e}")
             # Don't block extraction if validation fails
 
         # Clean extraction (existing validation)
@@ -713,7 +713,7 @@ def extract():
                 urls
             )
 
-        print(f"[EXTRACT] Extraction complete for submission {submission_id}")
+        logger.info(f"[INFO] EXTRACT] Extraction complete for submission {submission_id}")
 
         # Assess extraction quality and add warnings
         quality_result = quality_checker.assess_extraction_quality(
@@ -765,8 +765,8 @@ def extract():
         return jsonify(response)
 
     except Exception as e:
-        traceback.print_exc()
-        print(f"[EXTRACT] Unexpected error: {str(e)}")
+        logger.error("Error details:", exc_info=True)
+        logger.info(f"[INFO] EXTRACT] Unexpected error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -917,7 +917,7 @@ def submit():
                   f"taxable_old_a={engine_calc.get('taxable_old_a')}")
         except Exception as te:
             print(f"[TAX_CALC] Engine failed: {te}")
-            traceback.print_exc()
+            logger.error("Error details:", exc_info=True)
 
         # Try AI for enrichment (assumptions, pdf_summary, calculation_notes)
         ai_calc = None
@@ -988,9 +988,9 @@ def submit():
                     conflict_summary = existing_notes + "\n---\n" + conflict_summary
 
                 sheets_service.update_row(row, {"auditor_notes": conflict_summary})
-                print(f"[CONFLICT] Flagged {len(conflicts_list)} conflicts for auditor review")
+                logger.info(f"[INFO] CONFLICT] Flagged {len(conflicts_list)} conflicts for auditor review")
         except Exception as conflict_flag_e:
-            print(f"[CONFLICT] Failed to flag conflicts for auditor (non-blocking): {conflict_flag_e}")
+            logger.info(f"[INFO] CONFLICT] Failed to flag conflicts for auditor (non-blocking): {conflict_flag_e}")
 
         # [OK] Verify calculation consistency before finalizing
         is_valid, issues = sheets_service.verify_calculation_consistency(submission_id, calc)
@@ -1166,7 +1166,7 @@ def quote(submission_id):
         print(f"[PDF] Generated successfully: {filename} with password: {pdf_password}")
     except Exception as _pe:
         print(f"[PDF] Generation error for {submission_id}: {_pe}")
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
 
     pdf_url = f"{Config.PUBLIC_BASE_URL}/api/download/{filename}" if Config.PUBLIC_BASE_URL else ""
 
@@ -1192,7 +1192,7 @@ def quote(submission_id):
                 success = bool(resp) and not (isinstance(resp, dict) and resp.get('error'))
             except Exception as _we:
                 print(f"[QUOTE] WhatsApp send exception for {submission_id}: {_we}")
-                traceback.print_exc()
+                logger.error("Error details:", exc_info=True)
                 success = False
         else:
             print(f"[QUOTE] No WhatsApp phone for {submission_id}; original phone='{rec.get('phone', '')}'")
@@ -1269,7 +1269,7 @@ def choose_option():
             "message": f"Plan {plan_id} confirmed. Please pay ₹{upfront:.0f} to {Config.PAYMENT_UPI_ID}."
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1330,7 +1330,7 @@ def filing_status(submission_id):
                 },
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1404,7 +1404,7 @@ def notify_referrals():
 
         return jsonify({'success': True, 'sent': sent_count})
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1487,7 +1487,7 @@ def wallet(referral_code):
             "submission_id": rec.get("submission_id", "")
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1522,7 +1522,7 @@ def withdraw():
             "message": f"Withdrawal request of ₹{amount:.0f} to {upi_id} logged. Processed every Thursday 3:30 PM."
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1595,7 +1595,7 @@ def add_referral():
             "message": f"Referral added for {friend_name}. Notification sent to +91{friend_phone[-10:]}."
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1658,7 +1658,7 @@ def referral_status(referral_code):
             "confirmed_referrals": confirmed_count
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1703,7 +1703,7 @@ def payment_status(submission_id):
             "balance_due": balance_due
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1757,7 +1757,7 @@ def upload_payment_proof():
             "urls": urls
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1797,7 +1797,7 @@ def filing_status_api(submission_id):
             "timestamp": rec.get("timestamp", "")
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1837,7 +1837,7 @@ def update_filing_status_api():
             "filing_status": new_status
         })
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -1982,10 +1982,8 @@ def diagnostic():
 
 if __name__ == "__main__":
     import os
-    import sys
-    # Force unbuffered output
-    sys.stdout = open(sys.stdout.fileno(), mode='w', buffering=1, encoding='utf-8', errors='replace')
-    sys.stderr = open(sys.stderr.fileno(), mode='w', buffering=1, encoding='utf-8', errors='replace')
+    # NOTE: DO NOT reopen sys.stdout/sys.stderr - it bypasses our DebugFilter!
+    pass
 
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
     app.run(

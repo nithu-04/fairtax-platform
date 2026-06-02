@@ -229,7 +229,7 @@ def _regex_fallback(text, doc_type):
         if m: result['donee_pan'] = m.group(1)
 
     if result:
-        print(f"[EXTRACT][{doc_type}] regex fallback found: {result}")
+        logger.info(f"[INFO] EXTRACT][{doc_type}] regex fallback found: {result}")
     return result
 
 
@@ -282,15 +282,15 @@ def _sum_all_hra_from_text(text):
 
         if TOTAL_KEYWORDS.search(line):
             summary_rows.append(grand_total)
-            print(f"[HRA_SUM] Summary row: '{line.strip()[:60]}' = {grand_total}")
+            logger.info(f"[INFO] HRA_SUM] Summary row: '{line.strip()[:60]}' = {grand_total}")
         else:
             component_rows.append(grand_total)
-            print(f"[HRA_SUM] Component row: '{line.strip()[:60]}' = {grand_total}")
+            logger.info(f"[INFO] HRA_SUM] Component row: '{line.strip()[:60]}' = {grand_total}")
 
     # STRUCTURE B: a summary row exists — use it directly (no double-counting)
     if summary_rows:
         result = max(summary_rows)  # use the largest summary value
-        print(f"[HRA_SUM] Using summary row value: {result}")
+        logger.info(f"[INFO] HRA_SUM] Using summary row value: {result}")
         return result
 
     # STRUCTURE A: only component rows — sum them if there are 2+
@@ -300,9 +300,9 @@ def _sum_all_hra_from_text(text):
         for v in component_rows:
             rest = [x for x in component_rows if x != v]
             if rest and sum(rest) == v:
-                print(f"[HRA_SUM] Detected hidden total row ({v}), using it directly")
+                logger.info(f"[INFO] HRA_SUM] Detected hidden total row ({v}), using it directly")
                 return v
-        print(f"[HRA_SUM] Summing components {component_rows} = {total}")
+        logger.info(f"[INFO] HRA_SUM] Summing components {component_rows} = {total}")
         return total
 
     return None  # 0 or 1 row — leave to AI
@@ -501,7 +501,7 @@ def extract_document(file_b64, mime, doc_type="form16"):
 
         # ✅ Preprocess OCR text to normalize and deduplicate
         text = _preprocess_ocr_text(text)
-        print(f"[EXTRACT][{doc_type}] OCR text length: {len(text)} chars")
+        logger.info(f"[INFO] EXTRACT][{doc_type}] OCR text length: {len(text)} chars")
 
         # If EXTRACTION_USE_AI is disabled, use deterministic regex/heuristic extraction
         if not getattr(Config, 'EXTRACTION_USE_AI', True):
@@ -525,11 +525,11 @@ def extract_document(file_b64, mime, doc_type="form16"):
             if not result and text:
                 result = _regex_fallback(text, doc_type)
 
-        print(f"[EXTRACT][{doc_type}] final result: {result}")
+        logger.info(f"[INFO] EXTRACT][{doc_type}] final result: {result}")
         return result
 
     except Exception as e:
-        print(f"[EXTRACT][{doc_type}] error: {e}")
+        logger.info(f"[INFO] EXTRACT][{doc_type}] error: {e}")
         return {}
 
 
@@ -805,7 +805,7 @@ def validate_form16_payslip_consistency(merged_data, extractions):
                           f"Difference: {variance*100:.1f}%. Using Form 16 value."
             }
             conflicts.append(conflict)
-            print(f"[CONFLICT][{field_key}] {conflict['message']}")
+            logger.info(f"[INFO] CONFLICT][{field_key}] {conflict['message']}")
 
     # Special handling for TDS (should be annual in Form 16, monthly in Payslip)
     form16_tds = _to_num(form16_doc.get('tds_paid'))
@@ -829,7 +829,7 @@ def validate_form16_payslip_consistency(merged_data, extractions):
                           f"Payslip = ₹{payslip_tds:,.0f} (monthly). "
                           f"Using Form 16 value."
             })
-            print(f"[CONFLICT][tds_paid] TDS variance detected: {tds_variance*100:.1f}%")
+            logger.info(f"[INFO] CONFLICT][tds_paid] TDS variance detected: {tds_variance*100:.1f}%")
 
     # IMPORTANT: Form 16 values take PRIORITY - they're already in merged_data
     # The payslip was summed by merge_extractions, but we want Form 16 as primary
@@ -848,7 +848,7 @@ def validate_form16_payslip_consistency(merged_data, extractions):
     # Store conflicts for response
     if conflicts:
         merged_data['_form16_payslip_conflicts'] = conflicts
-        print(f"[CONFLICT] Detected {len(conflicts)} conflicts between Form 16 and Payslip")
+        logger.info(f"[INFO] CONFLICT] Detected {len(conflicts)} conflicts between Form 16 and Payslip")
 
     return merged_data, conflicts
 
@@ -1092,7 +1092,7 @@ User Data (raw JSON):
 
     except Exception as e:
         print("AI tax error:", e)
-        traceback.print_exc()
+        logger.error("Error details:", exc_info=True)
         # Return minimal error report instead of empty dict
         return {
             'error': str(e),
