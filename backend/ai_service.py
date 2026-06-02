@@ -39,55 +39,64 @@ CRITICAL RULES:
 • Numbers: plain integers (no commas, no currency symbols)."""
 
 # Dedicated prompt for payslip text extraction (fast-path via pdfplumber)
-PAYSLIP_TEXT_EXTRACTION_PROMPT = """You are an expert Indian payslip extractor. Extract salary data from the payslip text below.
-Return ONLY valid JSON with these exact keys (use 0 if not found):
+PAYSLIP_TEXT_EXTRACTION_PROMPT = """You are an Indian payroll expert extracting salary figures for ITR tax filing.
+
+━━━ STEP 1 — DETECT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+YTD / ANNUAL PAYSLIP (most common in India):
+  Signs: Multiple month columns visible (Apr 2024, May 2024 … or Month-1, Month-2 …)
+         AND a "Grand Total" / "Annual Total" / "Total" column on the FAR RIGHT.
+  Action: Use ONLY the Grand Total / Annual Total column. Set is_ytd = true.
+          Do NOT read any individual month column.
+
+MONTHLY PAYSLIP:
+  Signs: Shows a single month with one Amount column.
+  Action: Extract that month's figures. Set is_ytd = false.
+
+━━━ STEP 2 — FIELD EXTRACTION RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Read each row label carefully. For YTD payslips use ONLY the Grand Total column value.
+
+gross_salary     → Row: "TOTAL EARNING" | "GROSS SALARY" | "GROSS PAY" | "TOTAL SALARY" | "CTC"
+basic_salary     → Row: "BASIC" | "BASIC SALARY" | "BASIC PAY"
+hra_received     → SUM of EVERY row whose label contains the word "HRA":
+                   Examples: HRA, NON-FBP HRA, METRO HRA, BASIC HRA, SPECIAL HRA, FBP HRA
+                   Add ALL of them together. Show the sum in hra_received.
+tds_paid         → Row: "INCOME TAX" | "TDS" | "TAX DEDUCTED AT SOURCE" | "TAX DEDUCTION"
+                   ⚠ NEVER use "TOTAL DEDUCTION" (that includes PF + PT + TDS together)
+pf_employee      → Row: "PF" | "EMPLOYEE PF" | "EPF" | "EMPLOYEE EPF" | "PF CONTRIBUTION"
+                   (the employee's own contribution, not employer's)
+pf_employer      → Row: "EMPLOYER PF" | "EMPLOYER EPF" | "EMPLOYER CONTRIBUTION" (if present)
+professional_tax → Row: "PROF TAX" | "PROFESSIONAL TAX" | "PT" | "P.TAX" | "P TAX"
+lta              → Row: "LTA" | "LEAVE TRAVEL ALLOWANCE" | "LEAVE TRAVEL"
+special_allowance→ Row: "SPECIAL ALLOWANCE" | "SPECIAL PAY" | "NON-FBP OTHER ALL" | "OTHER ALLOWANCE"
+car_lease_allowance → Row: "CAR LEASE" | "CAR ALLOWANCE" | "VEHICLE ALLOWANCE" | "CAR LEASE ALLOWANCE"
+uniform_allowance → Row: "UNIFORM ALLOWANCE" | "DRESS ALLOWANCE"
+gratuity         → Row: "GRATUITY"
+leave_encashment → Row: "LEAVE ENCASHMENT" | "ENCASHMENT"
+
+━━━ STEP 3 — RETURN JSON ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Return ONLY valid JSON. All monetary values must be whole integers (no decimals, no commas):
 {
-  "name": "",
-  "employer_name": "",
-  "pan": "",
   "gross_salary": 0,
   "basic_salary": 0,
   "hra_received": 0,
+  "tds_paid": 0,
+  "pf_employee": 0,
+  "pf_employer": 0,
+  "professional_tax": 0,
   "lta": 0,
   "special_allowance": 0,
   "car_lease_allowance": 0,
   "uniform_allowance": 0,
-  "pf_employee": 0,
-  "pf_employer": 0,
-  "tds_paid": 0,
-  "professional_tax": 0,
   "gratuity": 0,
   "leave_encashment": 0,
   "is_ytd": false,
   "assumptions": []
 }
 
-━━━ STEP 1: DETECT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FORMAT A — MONTHLY PAYSLIP: single month, one "Amount" column.
-  → Extract monthly figures. Set is_ytd=false. All values are monthly; multiply by 12 for annual.
-
-FORMAT B — YTD/ANNUAL PAYSLIP: multiple month columns OR "Grand Total"/"YTD"/"Cumulative" column.
-  → Extract ONLY from "Grand Total" / "YTD" / "Annual Total" / rightmost totals column.
-  → DO NOT use individual month columns. Set is_ytd=true. Values are already annual (do NOT multiply by 12).
-
-━━━ STEP 2: HRA — SUM ALL VARIANTS ━━━━━━━━━━━━━━━━━━━━━━━━━━
-hra_received = SUM of ALL rows containing "HRA" in their label:
-  HRA + NON-FBP HRA + BASIC HRA + METRO HRA + any other "...HRA..." row.
-Add them all. Record each component in assumptions[].
-
-━━━ STEP 3: TDS — INCOME TAX ROW ONLY ━━━━━━━━━━━━━━━━━━━━━━━
-tds_paid = value from "INCOME TAX" or "TAX DEDUCTED AT SOURCE" or "TDS" row ONLY.
-⚠ NEVER use "TOTAL DEDUCTION" or "TOTAL DEDUCTIONS" — that is the sum of all deductions.
-
-━━━ STEP 4: PF & PROFESSIONAL TAX ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-pf_employee: "EMPLOYEE PF" / "PF EMPLOYEE" / "EPF EMPLOYEE" / "PF CONTRIBUTION"
-pf_employer: "EMPLOYER PF" / "PF EMPLOYER" / "EPF EMPLOYER"
-professional_tax: "PROFESSIONAL TAX" / "PROF TAX" / "PT"
-
-CRITICAL RULES:
-• Return plain integers only (no commas, no ₹ symbols).
-• Never invent values. Use 0 only if genuinely not found.
-• Record every assumption and conversion in the assumptions array."""
+CRITICAL: Use 0 for missing fields. Never invent. Never use monthly column values for YTD payslips."""
 
 INVESTMENT_PROMPTS = {
     "homeloan": """You are a tax document extractor. Extract from Home Loan Interest Certificate / Statement.
@@ -550,29 +559,28 @@ def extract_from_text(text, doc_type="payslip"):
             return {"success": False, "error": "Insufficient text for extraction"}
 
         # ── Deterministic pre-pass ────────────────────────────────────────────
-        # For payslip / form16 try regex first. If it finds the key monetary
-        # fields with high confidence we skip the AI call entirely (~0ms vs ~3s).
+        # Deterministic regex pre-pass: only for form16 (clean single-value structure).
+        # Payslips — especially YTD multi-column formats — are unreliable with regex,
+        # so we always use the LLM for payslips to guarantee accuracy.
         result = None
-        if doc_type in ("payslip", "form16"):
+        if doc_type == "form16":
             det_result, _ = deterministic_extract(text, doc_type)
             key_fields = ["gross_salary", "basic_salary", "hra_received", "tds_paid"]
             found = [f for f in key_fields if det_result.get(f, 0)]
-            if len(found) >= 3:  # at least 3 of 4 key fields found deterministically
-                print(f"[EXTRACT_TEXT][{doc_type}] Deterministic pass found {found} — skipping AI call")
+            if len(found) >= 3:
+                print(f"[EXTRACT_TEXT][form16] Deterministic pass found {found} — skipping AI call")
                 result = det_result
             else:
-                print(f"[EXTRACT_TEXT][{doc_type}] Deterministic found only {found} — calling AI")
+                print(f"[EXTRACT_TEXT][form16] Deterministic found only {found} — calling AI")
 
         if result is None:
-            # Pick the right prompt
             if doc_type == "payslip":
                 prompt = PAYSLIP_TEXT_EXTRACTION_PROMPT
             else:
                 prompt = INVESTMENT_PROMPTS.get(doc_type, EXTRACTION_PROMPT)
 
             messages = [{"role": "user", "content": f"{prompt}\n\nDOCUMENT TEXT:\n{text}"}]
-            # Payslip/form16 responses can be longer (YTD assumptions, etc.)
-            tokens = 1000 if doc_type in ("payslip", "form16") else 700
+            tokens = 1200 if doc_type == "payslip" else (1000 if doc_type == "form16" else 700)
             raw = _call_openai(messages, max_tokens=tokens)
             result = _parse_json(raw)
 
