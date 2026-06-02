@@ -36,16 +36,11 @@ try:
 except Exception as e:
     logger.error(f"Failed to register itr_bp: {e}", exc_info=True)
 
-# Global request logger - log EVERY request with proper logging
+# NOTE: Request logging REMOVED - was causing disk I/O slowdown
+# Only log errors, not every request
 @app.before_request
 def log_request():
-    # Don't read request data here - it can consume the stream!
-    if '/itr/extract' in request.path:
-        app.logger.info(f"[REQUEST] {request.method} {request.path}")
-        app.logger.info(f"  Content-Type: {request.content_type}")
-        app.logger.info(f"  Content-Length: {request.content_length}")
-        app.logger.info(f"  Files keys: {list(request.files.keys())}")
-        app.logger.info(f"  Form keys: {list(request.form.keys())}")
+    pass  # Silent - no logging on every request
 
 # Global error handler to catch ALL errors
 @app.errorhandler(422)
@@ -528,9 +523,9 @@ def extract():
             try:
                 result = sheets_service.insert_submission({"submission_id": submission_id})
                 row = sheets_service.get_row_by_submission_id(submission_id)
-                logger.info(f"[INFO] EXTRACT] Created new row for submission {submission_id}: row={row}")
+                # logger.info(f"[REMOVED-INFO] EXTRACT] Created new row for submission {submission_id}: row={row}")
             except Exception as e:
-                logger.info(f"[INFO] EXTRACT] Failed to create row for submission {submission_id}: {e}")
+                # logger.info(f"[REMOVED-INFO] EXTRACT] Failed to create row for submission {submission_id}: {e}")
 
         urls, extractions = [], []
 
@@ -556,7 +551,7 @@ def extract():
                 url = storage_service.save_file(temp_file, submission_id)
 
                 # Process with Vision extraction pipeline
-                logger.info(f"[INFO] EXTRACT] Processing {filename} ({mime}) as doc_type='{doc_type}' with Vision pipeline...")
+                # logger.info(f"[REMOVED-INFO] EXTRACT] Processing {filename} ({mime}) as doc_type='{doc_type}' with Vision pipeline...")
                 result = document_processor.process_documents(content, mime, doc_type)
 
                 # AUTO-DETECTION: Only when confidence is very low AND document is small
@@ -565,7 +560,7 @@ def extract():
                 detected_doc_type = doc_type
 
                 if conf < 0.5 and pages <= 10:
-                    logger.info(f"[INFO] EXTRACT] Auto-detecting: confidence={conf}, pages={pages}. Trying 3 most likely document types...")
+                    # logger.info(f"[REMOVED-INFO] EXTRACT] Auto-detecting: confidence={conf}, pages={pages}. Trying 3 most likely document types...")
 
                     best_result = result
                     best_confidence = result.get("confidence", 0)
@@ -581,7 +576,7 @@ def extract():
                             test_result = document_processor.process_documents(content, mime, test_type)
                             test_confidence = test_result.get("confidence", 0)
 
-                            logger.info(f"[INFO] EXTRACT] Tried {test_type}: confidence={test_confidence}")
+                            # logger.info(f"[REMOVED-INFO] EXTRACT] Tried {test_type}: confidence={test_confidence}")
 
                             if test_confidence > best_confidence:
                                 best_result = test_result
@@ -589,19 +584,19 @@ def extract():
                                 best_doc_type = test_type
 
                         except Exception as e:
-                            logger.info(f"[INFO] EXTRACT] Error trying {test_type}: {str(e)}")
+                            # logger.info(f"[REMOVED-INFO] EXTRACT] Error trying {test_type}: {str(e)}")
                             continue
 
                     # If we found a better match, use it
                     if best_doc_type != doc_type:
-                        logger.info(f"[INFO] EXTRACT] DETECTED DOCUMENT TYPE: {best_doc_type} (confidence: {best_confidence})")
+                        # logger.info(f"[REMOVED-INFO] EXTRACT] DETECTED DOCUMENT TYPE: {best_doc_type} (confidence: {best_confidence})")
                         result = best_result
                         result["auto_detected_doc_type"] = best_doc_type
                         detected_doc_type = best_doc_type
 
                 # Fail fast: if Vision extraction fails, return error
                 if not result["success"]:
-                    logger.info(f"[INFO] EXTRACT] Vision extraction failed: {result['error']}")
+                    # logger.info(f"[REMOVED-INFO] EXTRACT] Vision extraction failed: {result['error']}")
                     suggestion = doc_type_detector.suggest_correct_doc_type(detected_doc_type, filename, {})
                     error_msg = result["error"]
                     if suggestion.get("should_retry"):
@@ -619,13 +614,13 @@ def extract():
                 if "auto_detected_doc_type" in result:
                     extracted_data["_auto_detected_doc_type"] = result["auto_detected_doc_type"]
 
-                logger.info(f"[INFO] EXTRACT] {filename}: confidence={result['confidence']}, "
+                # logger.info(f"[REMOVED-INFO] EXTRACT] {filename}: confidence={result['confidence']}, "
                       f"pages={result['metadata'].get('pages_processed', 1)}")
 
                 return (url, extracted_data, None)
 
             except Exception as e:
-                logger.info(f"[INFO] EXTRACT] Exception processing {filename}: {str(e)}")
+                # logger.info(f"[REMOVED-INFO] EXTRACT] Exception processing {filename}: {str(e)}")
                 return (None, None, str(e))
 
         # PARALLEL EXTRACTION: Process all files concurrently
@@ -643,7 +638,7 @@ def extract():
         # Collect results and check for errors
         for url, extracted_data, error in results:
             if error:
-                logger.info(f"[INFO] EXTRACT] Document extraction error: {error}")
+                # logger.info(f"[REMOVED-INFO] EXTRACT] Document extraction error: {error}")
                 return jsonify({
                     "success": False,
                     "error": error
@@ -658,7 +653,7 @@ def extract():
         conflicts = merged.pop('_merge_conflicts', [])
 
         if conflicts:
-            logger.info(f"[INFO] EXTRACT][{doc_type}] conflicts detected: {conflicts}")
+            # logger.info(f"[REMOVED-INFO] EXTRACT][{doc_type}] conflicts detected: {conflicts}")
 
         # [OK] VALIDATION LAYER: Comprehensive extraction validation
         # Validates annual/monthly consistency, Form 16 priority, document reconciliation, etc.
@@ -684,9 +679,9 @@ def extract():
             # Merge the new conflicts with existing ones
             if form16_payslip_conflicts:
                 conflicts.extend(form16_payslip_conflicts)
-                logger.info(f"[INFO] EXTRACT] Form 16/Payslip conflicts: {len(form16_payslip_conflicts)}")
+                # logger.info(f"[REMOVED-INFO] EXTRACT] Form 16/Payslip conflicts: {len(form16_payslip_conflicts)}")
         except Exception as e:
-            logger.info(f"[INFO] EXTRACT] Form 16/Payslip validation failed (non-blocking): {e}")
+            # logger.info(f"[REMOVED-INFO] EXTRACT] Form 16/Payslip validation failed (non-blocking): {e}")
             # Don't block extraction if validation fails
 
         # Clean extraction (existing validation)
@@ -713,7 +708,7 @@ def extract():
                 urls
             )
 
-        logger.info(f"[INFO] EXTRACT] Extraction complete for submission {submission_id}")
+        # logger.info(f"[REMOVED-INFO] EXTRACT] Extraction complete for submission {submission_id}")
 
         # Assess extraction quality and add warnings
         quality_result = quality_checker.assess_extraction_quality(
@@ -766,7 +761,7 @@ def extract():
 
     except Exception as e:
         logger.error("Error details:", exc_info=True)
-        logger.info(f"[INFO] EXTRACT] Unexpected error: {str(e)}")
+        # logger.info(f"[REMOVED-INFO] EXTRACT] Unexpected error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -988,9 +983,9 @@ def submit():
                     conflict_summary = existing_notes + "\n---\n" + conflict_summary
 
                 sheets_service.update_row(row, {"auditor_notes": conflict_summary})
-                logger.info(f"[INFO] CONFLICT] Flagged {len(conflicts_list)} conflicts for auditor review")
+                # logger.info(f"[REMOVED-INFO] CONFLICT] Flagged {len(conflicts_list)} conflicts for auditor review")
         except Exception as conflict_flag_e:
-            logger.info(f"[INFO] CONFLICT] Failed to flag conflicts for auditor (non-blocking): {conflict_flag_e}")
+            # logger.info(f"[REMOVED-INFO] CONFLICT] Failed to flag conflicts for auditor (non-blocking): {conflict_flag_e}")
 
         # [OK] Verify calculation consistency before finalizing
         is_valid, issues = sheets_service.verify_calculation_consistency(submission_id, calc)
