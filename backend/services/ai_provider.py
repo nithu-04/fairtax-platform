@@ -91,9 +91,8 @@ def call_vision_model(image_bytes, prompt):
                     ]
                 }
             ],
-            max_tokens=700,
-            temperature=0.0,
-            response_format={"type": "json_object"}
+            max_tokens=1200,
+            temperature=0.0
         )
 
         result = response.choices[0].message.content
