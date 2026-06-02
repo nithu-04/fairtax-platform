@@ -102,7 +102,7 @@ try:
     from scheduler_service import start_scheduler
     _scheduler = start_scheduler()
 except Exception as _e:
-    print(f"[Scheduler] Could not start: {_e}")
+    # logger.info(f"[REMOVED] Scheduler] Could not start: {_e}")
 
 @app.route("/api/health")
 def health():
@@ -116,7 +116,7 @@ def landing():
     try:
         return render_template("landing.html")
     except Exception as e:
-        print(f"[LANDING] Error serving landing.html: {e}")
+    # logger.info(f"[REMOVED] LANDING] Error serving landing.html: {e}")
         logger.error(f"[LANDING] Error: {e}", exc_info=True)
         return {"error": "Could not load landing page"}, 500
 
@@ -124,10 +124,10 @@ def landing():
 # ---------- Phase-by-phase save ----------
 @app.route("/api/save-phase", methods=["POST"])
 def save_phase():
-    print(">>> [SAVE_PHASE] FUNCTION CALLED - NEW CODE")
+    # logger.info(f"[REMOVED] ">>> [SAVE_PHASE] FUNCTION CALLED - NEW CODE")
     try:
         data = request.get_json(force=True)
-        print(f">>> [SAVE_PHASE] Got data with filing_category={data.get('filing_category')}")
+    # logger.info(f"[REMOVED]  [SAVE_PHASE] Got data with filing_category={data.get('filing_category')}")
 
         # Compatibility normalizations: frontend uses `filing_type`, backend/sheets expect `filing_category`.
         if data.get('filing_type') and not data.get('filing_category'):
@@ -179,7 +179,7 @@ def save_phase():
         )
         if not _sheets_configured:
             referral_code = data.get('referral_code', '')
-            print(f"[SAVE_PHASE][LOCAL] Sheets not configured — returning mock success. submission_id={submission_id}")
+    # logger.info(f"[REMOVED] SAVE_PHASE][LOCAL] Sheets not configured — returning mock success. submission_id={submission_id}")
             return jsonify({"success": True, "submission_id": submission_id, "referral_code": referral_code})
 
         # Ensure a referral code exists early so we can return it to the UI
@@ -208,7 +208,7 @@ def save_phase():
 
         # Debug: log incoming save keys for troubleshooting
         try:
-            print(f"[SAVE_PHASE] incoming keys={list(data.keys())} phone={data.get('phone')} filing_category={data.get('filing_category')}")
+    # logger.info(f"[REMOVED] SAVE_PHASE] incoming keys={list(data.keys())} phone={data.get('phone')} filing_category={data.get('filing_category')}")
         except Exception:
             pass
 
@@ -218,9 +218,9 @@ def save_phase():
                 aggregates = _aggregate_investments(data)
                 if aggregates:
                     data.update(aggregates)
-                    print(f"[SAVE_PHASE] Unpacked investment JSON → {list(aggregates.keys())}")
+    # logger.info(f"[REMOVED] SAVE_PHASE] Unpacked investment JSON → {list(aggregates.keys())}")
             except Exception as e:
-                print(f"[SAVE_PHASE] Investment aggregation warning: {e}")
+    # logger.info(f"[REMOVED] SAVE_PHASE] Investment aggregation warning: {e}")
 
         # 🔥 CASE 1: No ID → create new
         if not submission_id:
@@ -264,9 +264,9 @@ def save_phase():
                 # Only update status if this is a NEW registration (just created submission)
                 if not insert_res or (isinstance(insert_res, dict) and insert_res.get('created')):
                     sheets_service.update_referral_status(user_phone, "registered")
-                    print(f"[REFERRAL_HOOK] Updated referral status for phone {user_phone} → registered")
+    # logger.info(f"[REMOVED] REFERRAL_HOOK] Updated referral status for phone {user_phone} → registered")
         except Exception as e:
-            print(f"[REFERRAL_HOOK] Warning: Could not update referral status: {e}")
+    # logger.info(f"[REMOVED] REFERRAL_HOOK] Warning: Could not update referral status: {e}")
 
         # Read back referral code (if generated) so frontend can display it immediately
         try:
@@ -302,14 +302,14 @@ def whatsapp_webhook():
         challenge = request.args.get("hub.challenge")
         # Debug: log incoming token vs configured token to help verification
         try:
-            print(f"[WEBHOOK VERIFY] received mode={mode!r} hub.verify_token={token!r} expected={Config.WHATSAPP_VERIFY_TOKEN!r}")
+    # logger.info(f"[REMOVED] WEBHOOK VERIFY] received mode={mode!r} hub.verify_token={token!r} expected={Config.WHATSAPP_VERIFY_TOKEN!r}")
         except Exception:
-            print("[WEBHOOK VERIFY] received verification request (could not print tokens)")
+    # logger.info(f"[REMOVED] "[WEBHOOK VERIFY] received verification request (could not print tokens)")
 
         if mode == "subscribe" and token == Config.WHATSAPP_VERIFY_TOKEN:
-            print("[WEBHOOK VERIFY] token matched — returning challenge")
+    # logger.info(f"[REMOVED] "[WEBHOOK VERIFY] token matched — returning challenge")
             return challenge, 200
-        print("[WEBHOOK VERIFY] token mismatch — returning 403")
+    # logger.info(f"[REMOVED] "[WEBHOOK VERIFY] token mismatch — returning 403")
         return "Forbidden", 403
 
     # POST: incoming webhook events
@@ -350,17 +350,17 @@ def whatsapp_webhook():
                     try:
                         reply = ai_service.generate_whatsapp_reply(text, phone=phone)
                     except Exception as e:
-                        print("AI generation error:", e)
+    # logger.info(f"[REMOVED] "AI generation error:", e)
                         reply = "Thanks — our team will reply shortly."
 
                     try:
                         whatsapp_service.send_text(wa_phone, reply)
                     except Exception as e:
-                        print("Failed to send WA reply:", e)
+    # logger.info(f"[REMOVED] "Failed to send WA reply:", e)
 
         return jsonify({"success": True})
     except Exception as e:
-        print("Webhook processing error:", e)
+    # logger.info(f"[REMOVED] "Webhook processing error:", e)
         return jsonify({"success": False, "error": str(e)}), 500
 # ---------- Aggregation helpers ----------
 def _deduplicate_and_sum_array(items, dedup_key, sum_keys):
@@ -424,9 +424,9 @@ def _aggregate_investments(merged_data):
         )
 
         if dupes:
-            print(f"[AGG] Home loans: {len(dupes)} duplicates detected and merged")
+    # logger.info(f"[REMOVED] AGG] Home loans: {len(dupes)} duplicates detected and merged")
             for d in dupes:
-                print(f"  Duplicate loan account {d.get('original', {}).get('policy_no')}")
+    # logger.info(f"[REMOVED] f"  Duplicate loan account {d.get('original', {}).get('policy_no')}")
 
         sum_interest = totals.get('home_loan_interest', 0) + totals.get('interest', 0) + totals.get('interest_amount', 0)
         # NOTE: 'outstanding' / 'loan_outstanding' is the remaining loan BALANCE,
@@ -454,9 +454,9 @@ def _aggregate_investments(merged_data):
         )
 
         if dupes:
-            print(f"[AGG] Insurance: {len(dupes)} duplicates detected and merged")
+    # logger.info(f"[REMOVED] AGG] Insurance: {len(dupes)} duplicates detected and merged")
             for d in dupes:
-                print(f"  Duplicate policy {d.get('original', {}).get('policy_no')}")
+    # logger.info(f"[REMOVED] f"  Duplicate policy {d.get('original', {}).get('policy_no')}")
 
         sum_life_prem = 0.0
         sum_health_self = 0.0
@@ -500,9 +500,9 @@ def _aggregate_investments(merged_data):
         )
 
         if dupes:
-            print(f"[AGG] Donations: {len(dupes)} duplicates detected and merged")
+    # logger.info(f"[REMOVED] AGG] Donations: {len(dupes)} duplicates detected and merged")
             for d in dupes:
-                print(f"  Duplicate donation receipt {d.get('original', {}).get('receipt_number')}")
+    # logger.info(f"[REMOVED] f"  Duplicate donation receipt {d.get('original', {}).get('receipt_number')}")
 
         total_don = totals.get('donation_amount', 0) + totals.get('amount', 0)
         if total_don > 0:
@@ -665,10 +665,10 @@ def extract():
             merged.update(validated_data)
             merged['_validation_report'] = validation_report
 
-            print(f"[VALIDATION] Valid={validation_report.get('valid')}, "
+    # logger.info(f"[REMOVED] VALIDATION] Valid={validation_report.get('valid')}, "
                   f"Warnings={len(validation_report.get('warnings', []))}")
         except Exception as e:
-            print(f"[VALIDATION] Comprehensive validation failed (non-blocking): {e}")
+    # logger.info(f"[REMOVED] VALIDATION] Comprehensive validation failed (non-blocking): {e}")
             # Non-breaking: continue with unvalidated data
             merged['_validation_report'] = {'valid': False, 'error': str(e)}
 
@@ -816,33 +816,33 @@ def submit():
                 # Last resort: return empty dict
                 data = {}
 
-        print(f"[SUBMIT] Data received: {list(data.keys())}", flush=True)
+    # logger.info(f"[REMOVED] SUBMIT] Data received: {list(data.keys())}", flush=True)
 
         submission_id = data.get("submission_id")
-        print(f"[SUBMIT] submission_id: {submission_id}")
+    # logger.info(f"[REMOVED] SUBMIT] submission_id: {submission_id}")
         if not submission_id:
-            print("[SUBMIT] No submission_id provided")
+    # logger.info(f"[REMOVED] "[SUBMIT] No submission_id provided")
             return jsonify({"success": False, "error": "submission_id required"}), 400
 
         row = sheets_service.get_row_by_submission_id(submission_id)
-        print(f"[SUBMIT] Initial row lookup: {row}")
+    # logger.info(f"[REMOVED] SUBMIT] Initial row lookup: {row}")
 
         # If row missing, create it so updates and calculations persist
         if row is None:
             try:
-                print(f"[SUBMIT] Creating new submission in Sheets...")
+    # logger.info(f"[REMOVED] SUBMIT] Creating new submission in Sheets...")
                 result = sheets_service.insert_submission({"submission_id": submission_id, **data})
-                print(f"[SUBMIT] Insert result: {result}")
-                print(f"[SUBMIT] Referral code generated: {result.get('referral_code')}")
+    # logger.info(f"[REMOVED] SUBMIT] Insert result: {result}")
+    # logger.info(f"[REMOVED] SUBMIT] Referral code generated: {result.get('referral_code')}")
                 # Update data with generated referral code
                 if result.get('referral_code'):
                     data['referral_code'] = result['referral_code']
                 row = sheets_service.get_row_by_submission_id(submission_id)
-                print(f"[SUBMIT] Row after insert: {row}")
+    # logger.info(f"[REMOVED] SUBMIT] Row after insert: {row}")
             except Exception as insert_err:
                 logger.error(f"[SUBMIT] ERROR during insert_submission: {insert_err}")
                 logger.error(f"[SUBMIT] Traceback: {traceback.format_exc()}")
-                print(f"[SUBMIT] ERROR during insert_submission: {insert_err}", flush=True)
+    # logger.info(f"[REMOVED] SUBMIT] ERROR during insert_submission: {insert_err}", flush=True)
                 # Check if it's a quota error
                 if "RESOURCE_EXHAUSTED" in str(insert_err) or "Quota exceeded" in str(insert_err):
                     logger.warning("[SUBMIT] Google Sheets quota exceeded - data will be retried later")
@@ -855,12 +855,12 @@ def submit():
         if (not is_referral_filing and data.get('name') and
             data.get('referral_code', '').startswith('USER_')):
             data['referral_code'] = sheets_service.gen_referral_code(data.get('name'))
-            print(f"[SUBMIT] Regenerated referral code with actual name: {data['referral_code']}")
+    # logger.info(f"[REMOVED] SUBMIT] Regenerated referral code with actual name: {data['referral_code']}")
 
         # [OK] save final data
-        print(f"[SUBMIT] Updating row with data...")
+    # logger.info(f"[REMOVED] SUBMIT] Updating row with data...")
         sheets_service.update_row(row, data)
-        print(f"[SUBMIT] Update complete")
+    # logger.info(f"[REMOVED] SUBMIT] Update complete")
 
         # Merge sheet row (has OCR-extracted investment data) with submitted form data
         existing_rec = sheets_service.check_approval(submission_id)
@@ -869,7 +869,7 @@ def submit():
             merged_data = {**existing_rec, **data}
         else:
             merged_data = data
-        print(f"[SUBMIT] merged_data keys: {list(merged_data.keys())}")
+    # logger.info(f"[REMOVED] SUBMIT] merged_data keys: {list(merged_data.keys())}")
 
         # [OK] Aggregate multi-entry JSON fields with duplicate detection
         try:
@@ -879,7 +879,7 @@ def submit():
                 for k, v in aggregates.items():
                     merged_data[k] = v
         except Exception as _agg_e:
-            print('Aggregation error:', _agg_e)
+    # logger.info(f"[REMOVED] 'Aggregation error:', _agg_e)
 
 
         # Ensure rent alias: map frontend `rent_paid` (monthly) to `monthly_rent` expected by engine
@@ -893,25 +893,25 @@ def submit():
         # Validator runs in /api/extract, not here in /api/submit
         validation_report = merged_data.get('_validation_report', {})
         if validation_report:
-            print(f"[VALIDATION] Valid={validation_report.get('valid')}, "
+    # logger.info(f"[REMOVED] VALIDATION] Valid={validation_report.get('valid')}, "
                   f"Errors={len(validation_report.get('errors', []))}, "
                   f"Warnings={len(validation_report.get('warnings', []))}")
             if not validation_report.get('valid'):
                 logger.warning(f"[VALIDATION] Submission has validation errors: "
                               f"{validation_report.get('errors')}")
         else:
-            print("[VALIDATION] No validation report from extraction (normal if not Form16/Payslip)")
+    # logger.info(f"[REMOVED] "[VALIDATION] No validation report from extraction (normal if not Form16/Payslip)")
 
         # [OK] TAX CALC — deterministic engine is the source of truth;
         #    AI enrichment (assumptions, notes) is optional overlay.
         engine_calc = {}
         try:
             engine_calc = tax_engine.calculate(merged_data)
-            print(f"[TAX_CALC] Engine OK — sec_80c={engine_calc.get('sec_80c')}, "
+    # logger.info(f"[REMOVED] TAX_CALC] Engine OK — sec_80c={engine_calc.get('sec_80c')}, "
                   f"deductions_total={engine_calc.get('deductions_total')}, "
                   f"taxable_old_a={engine_calc.get('taxable_old_a')}")
         except Exception as te:
-            print(f"[TAX_CALC] Engine failed: {te}")
+    # logger.info(f"[REMOVED] TAX_CALC] Engine failed: {te}")
             logger.error("Error details:", exc_info=True)
 
         # Try AI for enrichment (assumptions, pdf_summary, calculation_notes)
@@ -919,7 +919,7 @@ def submit():
         try:
             ai_calc = ai_service.calculate_tax_ai(merged_data)
         except Exception as e:
-            print(f"[TAX_CALC] AI enrichment failed (non-blocking): {e}")
+    # logger.info(f"[REMOVED] TAX_CALC] AI enrichment failed (non-blocking): {e}")
 
         # Merge: start with AI (rich structure) then override all numeric
         # tax/deduction fields with the deterministic engine values
@@ -948,7 +948,7 @@ def submit():
                 'old_refund_or_due': engine_calc.get('refund_old_a', 0),
             })
             calc.setdefault('compatibility_summary', {}).update(engine_calc)
-            print("[TAX_CALC] Merged engine values into AI enrichment")
+    # logger.info(f"[REMOVED] "[TAX_CALC] Merged engine values into AI enrichment")
         else:
             calc = engine_calc
 
@@ -990,7 +990,7 @@ def submit():
         # [OK] Verify calculation consistency before finalizing
         is_valid, issues = sheets_service.verify_calculation_consistency(submission_id, calc)
         if not is_valid:
-            print(f"[SUBMIT][{submission_id}] Calculation validation failed: {issues}")
+    # logger.info(f"[REMOVED] SUBMIT][{submission_id}] Calculation validation failed: {issues}")
             # Log but don't block submission — auditor will review
 
         # [OK] Determine referral code to return. Prefer client-provided value
@@ -1025,7 +1025,7 @@ def submit():
 
             # VALIDATION: Phone must be at least 10 digits
             if len(phone_digits) < 10:
-                print(f"[REFERRAL] Skipped referral {i}: Invalid phone format '{ref_phone_raw}' (needs 10+ digits)")
+    # logger.info(f"[REMOVED] REFERRAL] Skipped referral {i}: Invalid phone format '{ref_phone_raw}' (needs 10+ digits)")
                 continue
 
             # Use last 10 digits for Indian phone numbers
@@ -1033,7 +1033,7 @@ def submit():
 
             # DEDUPLICATION: Skip if same phone already logged in this batch
             if ref_phone in logged_phones:
-                print(f"[REFERRAL] Skipped referral {i}: Duplicate phone {ref_phone}")
+    # logger.info(f"[REMOVED] REFERRAL] Skipped referral {i}: Duplicate phone {ref_phone}")
                 continue
 
             logged_phones.add(ref_phone)
@@ -1041,9 +1041,9 @@ def submit():
             # Log the validated referral
             try:
                 sheets_service.log_referral(ref_code, ref_name, ref_phone)
-                print(f"[REFERRAL] Logged referral {i}: {ref_name} ({ref_phone})")
+    # logger.info(f"[REMOVED] REFERRAL] Logged referral {i}: {ref_name} ({ref_phone})")
             except Exception as e:
-                print(f"[REFERRAL] Error logging referral {i}: {e}")
+    # logger.info(f"[REMOVED] REFERRAL] Error logging referral {i}: {e}")
 
         # WhatsApp (still uses phone) — non-blocking, errors don't block submission
         try:
@@ -1055,9 +1055,9 @@ def submit():
                     "submission_received",
                     [data.get("name", "there"), ref_code]
                 )
-                print(f"[WA][submit] template send response: {wa_resp}")
+    # logger.info(f"[REMOVED] WA][submit] template send response: {wa_resp}")
         except Exception as wa_err:
-            print(f"[WA][submit] WARNING - WhatsApp notification failed (non-blocking): {wa_err}")
+    # logger.info(f"[REMOVED] WA][submit] WARNING - WhatsApp notification failed (non-blocking): {wa_err}")
             # Continue with submission regardless — WhatsApp is secondary
 
         # Apps Script webhook (fire-and-forget, non-blocking)
@@ -1083,14 +1083,14 @@ def submit():
             "refund_old_b": engine_calc.get('refund_old_b', 0),
             "refund_old_c": engine_calc.get('refund_old_c', 0),
         }
-        print(f"[SUBMIT] Returning success response: {response_data}")
+    # logger.info(f"[REMOVED] SUBMIT] Returning success response: {response_data}")
         return jsonify(response_data)
 
     except Exception as e:
         exc_traceback = traceback.format_exc()
         error_msg = str(e)
-        print(f"[SUBMIT] EXCEPTION in submit endpoint: {error_msg}", flush=True)
-        print(f"[SUBMIT] Traceback:\n{exc_traceback}", flush=True)
+    # logger.info(f"[REMOVED] SUBMIT] EXCEPTION in submit endpoint: {error_msg}", flush=True)
+    # logger.info(f"[REMOVED] SUBMIT] Traceback:\n{exc_traceback}", flush=True)
 
         # Try to return error response
         try:
@@ -1098,12 +1098,12 @@ def submit():
                 "success": False,
                 "error": error_msg
             }
-            print(f"[SUBMIT] Created error_response dict", flush=True)
+    # logger.info(f"[REMOVED] SUBMIT] Created error_response dict", flush=True)
             result = jsonify(error_response)
-            print(f"[SUBMIT] jsonify succeeded", flush=True)
+    # logger.info(f"[REMOVED] SUBMIT] jsonify succeeded", flush=True)
             return result, 500
         except Exception as json_err:
-            print(f"[SUBMIT] ERROR: Could not jsonify error response: {json_err}", flush=True)
+    # logger.info(f"[REMOVED] SUBMIT] ERROR: Could not jsonify error response: {json_err}", flush=True)
             return {"success": False, "error": error_msg}, 500
 
 
@@ -1158,9 +1158,9 @@ def quote(submission_id):
             pdf_password = submission_id[-6:] if submission_id else None
 
         generate_quote_pdf(pdf_data, filename, password=pdf_password)
-        print(f"[PDF] Generated successfully: {filename} with password: {pdf_password}")
+    # logger.info(f"[REMOVED] PDF] Generated successfully: {filename} with password: {pdf_password}")
     except Exception as _pe:
-        print(f"[PDF] Generation error for {submission_id}: {_pe}")
+    # logger.info(f"[REMOVED] PDF] Generation error for {submission_id}: {_pe}")
         logger.error("Error details:", exc_info=True)
 
     pdf_url = f"{Config.PUBLIC_BASE_URL}/api/download/{filename}" if Config.PUBLIC_BASE_URL else ""
@@ -1169,45 +1169,45 @@ def quote(submission_id):
     if not rec.get("filing_status"):
         resp = None
         wa_phone = whatsapp_service.normalize_phone(rec.get("phone", ""))
-        print(f"[QUOTE] Attempting WhatsApp send for {submission_id}: phone={wa_phone}, pdf_url={pdf_url}")
+    # logger.info(f"[REMOVED] QUOTE] Attempting WhatsApp send for {submission_id}: phone={wa_phone}, pdf_url={pdf_url}")
         if wa_phone:
             best_refund = max(f("variant_a_refund"), f("variant_b_refund"), f("variant_c_refund"))
             try:
                 # The quote_ready template has a URL button that needs the filename
                 # (or unique part of the URL) as a dynamic parameter
-                print(f"[QUOTE] Sending WhatsApp template 'quote_ready' to {wa_phone} with refund: {best_refund}, pdf_url: {pdf_url}")
+    # logger.info(f"[REMOVED] QUOTE] Sending WhatsApp template 'quote_ready' to {wa_phone} with refund: {best_refund}, pdf_url: {pdf_url}")
                 resp = whatsapp_service.send_template(
                     wa_phone,
                     "quote_ready",
                     [rec.get("name", "there"), str(int(best_refund))],
                     button_url_param=pdf_url,
                 )
-                print(f"[QUOTE] WhatsApp response: {resp}")
+    # logger.info(f"[REMOVED] QUOTE] WhatsApp response: {resp}")
                 # Consider send successful if response is truthy and contains no 'error' key
                 success = bool(resp) and not (isinstance(resp, dict) and resp.get('error'))
             except Exception as _we:
-                print(f"[QUOTE] WhatsApp send exception for {submission_id}: {_we}")
+    # logger.info(f"[REMOVED] QUOTE] WhatsApp send exception for {submission_id}: {_we}")
                 logger.error("Error details:", exc_info=True)
                 success = False
         else:
-            print(f"[QUOTE] No WhatsApp phone for {submission_id}; original phone='{rec.get('phone', '')}'")
+    # logger.info(f"[REMOVED] QUOTE] No WhatsApp phone for {submission_id}; original phone='{rec.get('phone', '')}'")
             success = False
 
         if success:
             row = sheets_service.get_row_by_submission_id(submission_id)
             sheets_service.update_row(row, {"filing_status": "QUOTE_SENT"})
-            print(f"[QUOTE] [OK] WhatsApp sent successfully and filing_status updated to QUOTE_SENT for {submission_id}")
+    # logger.info(f"[REMOVED] QUOTE] [OK] WhatsApp sent successfully and filing_status updated to QUOTE_SENT for {submission_id}")
 
             # [OK] HOOK: Update referral status to "quote_generated"
             try:
                 user_phone = rec.get('phone')
                 if user_phone:
                     sheets_service.update_referral_status(user_phone, "quote_generated")
-                    print(f"[REFERRAL_HOOK] Updated referral status for phone {user_phone} → quote_generated")
+    # logger.info(f"[REMOVED] REFERRAL_HOOK] Updated referral status for phone {user_phone} → quote_generated")
             except Exception as e:
-                print(f"[REFERRAL_HOOK] Warning: Could not update referral status: {e}")
+    # logger.info(f"[REMOVED] REFERRAL_HOOK] Warning: Could not update referral status: {e}")
         else:
-            print(f"[QUOTE] [ERROR] WhatsApp send failed or skipped for {submission_id}: {resp}")
+    # logger.info(f"[REMOVED] QUOTE] [ERROR] WhatsApp send failed or skipped for {submission_id}: {resp}")
 
     return jsonify({
         "success": True,
@@ -1365,7 +1365,7 @@ def notify_referrals():
 
             # VALIDATION: Phone must be at least 10 digits
             if len(phone_digits) < 10:
-                print(f"[NOTIFY] Skipping referral {name}: Invalid phone {phone_raw}")
+    # logger.info(f"[REMOVED] NOTIFY] Skipping referral {name}: Invalid phone {phone_raw}")
                 continue
 
             # Use last 10 digits for Indian phone numbers
@@ -1583,7 +1583,7 @@ def add_referral():
                 [referrer_name or "Your friend", referral_code]
             )
         except Exception as e:
-            print(f"[WARN] Could not send WhatsApp: {e}")
+    # logger.info(f"[REMOVED] WARN] Could not send WhatsApp: {e}")
 
         return jsonify({
             "success": True,
@@ -1733,9 +1733,9 @@ def upload_payment_proof():
                     user_phone = rec.get('phone')
                     if user_phone:
                         sheets_service.update_referral_status(user_phone, "fees_paid")
-                        print(f"[REFERRAL_HOOK] Updated referral status for phone {user_phone} → fees_paid")
+    # logger.info(f"[REMOVED] REFERRAL_HOOK] Updated referral status for phone {user_phone} → fees_paid")
                 except Exception as e:
-                    print(f"[REFERRAL_HOOK] Warning: Could not update referral status: {e}")
+    # logger.info(f"[REMOVED] REFERRAL_HOOK] Warning: Could not update referral status: {e}")
 
         # Send WhatsApp notification to admin
         rec = sheets_service.check_approval(submission_id)
@@ -1868,12 +1868,12 @@ def schedule_reminder_messages():
                             "payment_reminder",
                             [rec.get("name", "there"), rec.get("submission_id", "")]
                         )
-                        print(f"[SCHEDULER] Sent 3-day reminder to {wa_phone}")
+    # logger.info(f"[REMOVED] SCHEDULER] Sent 3-day reminder to {wa_phone}")
                     except Exception as e:
-                        print(f"[SCHEDULER] Failed to send reminder: {e}")
+    # logger.info(f"[REMOVED] SCHEDULER] Failed to send reminder: {e}")
 
     except Exception as e:
-        print(f"[SCHEDULER] Error in schedule_reminder_messages: {e}")
+    # logger.info(f"[REMOVED] SCHEDULER] Error in schedule_reminder_messages: {e}")
 
 
 def schedule_referral_status_updates():
@@ -1919,12 +1919,12 @@ def schedule_referral_status_updates():
                                 "referral_update",
                                 [rec.get("name", "there"), str(count), milestone_msg]
                             )
-                            print(f"[SCHEDULER] Sent referral update to {wa_phone}")
+    # logger.info(f"[REMOVED] SCHEDULER] Sent referral update to {wa_phone}")
                     except Exception as e:
-                        print(f"[SCHEDULER] Failed to send referral update: {e}")
+    # logger.info(f"[REMOVED] SCHEDULER] Failed to send referral update: {e}")
 
     except Exception as e:
-        print(f"[SCHEDULER] Error in schedule_referral_status_updates: {e}")
+    # logger.info(f"[REMOVED] SCHEDULER] Error in schedule_referral_status_updates: {e}")
 
 
 # DIAGNOSTIC ENDPOINT - For debugging when tests fail
@@ -1936,7 +1936,7 @@ def diagnostic():
 
         # Log to both file and console
         logger.info(f"[DIAGNOSTIC] Received data: {data}")
-        print(f"[DIAGNOSTIC] Print statement: {data}", flush=True)
+    # logger.info(f"[REMOVED] DIAGNOSTIC] Print statement: {data}", flush=True)
 
         # Test Sheets access
         sheets_status = "OK" if sheets_service._client() else "NO CLIENT"
