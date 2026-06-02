@@ -374,30 +374,28 @@ def deterministic_extract(text, doc_type="form16"):
 
     def find_number_by_labels(labels):
         for lab in labels:
-            # try label: number
             m = re.search(fr'{lab}\s*[:\-]?\s*([\d\.,₹₹ ]{{1,30}})', t, re.I)
             if m:
                 val = _parse_int_like(m.group(1))
                 if val:
                     return val, f"label:{lab}", m.group(1)
-        # fallback: search lines containing label and pick first number in line
+        # Search lines containing label — take the LAST 4+ digit number
+        # (rightmost column = Grand Total in YTD multi-column payslips)
         lines = t.split('\n')
         for i, line in enumerate(lines):
             for lab in labels:
                 if re.search(lab, line, re.I):
-                    m2 = re.search(r'([\d\.,₹₹ ]{3,30})', line)
-                    if m2:
-                        val = _parse_int_like(m2.group(1))
+                    nums = re.findall(r'\d{4,}', line.replace(',', ''))
+                    if nums:
+                        val = _parse_int_like(nums[-1])
                         if val:
-                            return val, f"line:{lab}", m2.group(1)
-                    # try next line
+                            return val, f"line:{lab}", nums[-1]
                     if i + 1 < len(lines):
-                        next_line = lines[i+1]
-                        m3 = re.search(r'([\d\.,₹₹ ]{3,30})', next_line)
-                        if m3:
-                            val = _parse_int_like(m3.group(1))
+                        next_nums = re.findall(r'\d{4,}', lines[i+1].replace(',', ''))
+                        if next_nums:
+                            val = _parse_int_like(next_nums[-1])
                             if val:
-                                return val, f"nextline:{lab}", m3.group(1)
+                                return val, f"nextline:{lab}", next_nums[-1]
         return None, None, None
 
     def find_text_label(labels):
@@ -424,7 +422,7 @@ def deterministic_extract(text, doc_type="form16"):
 
     # field labels map
     labels_map = {
-        'gross_salary': [r'gross salary', r'gross total', r'total gross', r'total earnings', r'gross pay', r'gross income', r'total remuneration'],
+        'gross_salary': [r'gross salary', r'gross total', r'total gross', r'total earnings', r'total earning\b', r'gross pay', r'gross income', r'total remuneration', r'ctc'],
         'basic_salary': [r'basic salary', r'\bbasic\b', r'basic pay'],
         'hra_received': [r'hra received', r'house rent allowance', r'\bhra\b'],
         'lta': [r'leave travel allowance', r'\blta\b', r'leave travel'],
@@ -577,7 +575,9 @@ def extract_from_text(text, doc_type="payslip"):
                 prompt = INVESTMENT_PROMPTS.get(doc_type, EXTRACTION_PROMPT)
 
             messages = [{"role": "user", "content": f"{prompt}\n\nDOCUMENT TEXT:\n{text}"}]
-            raw = _call_openai(messages)
+            # Payslip/form16 responses can be longer (YTD assumptions, etc.)
+            tokens = 1000 if doc_type in ("payslip", "form16") else 700
+            raw = _call_openai(messages, max_tokens=tokens)
             result = _parse_json(raw)
 
         if not result:

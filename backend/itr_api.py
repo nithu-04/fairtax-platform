@@ -331,11 +331,11 @@ def extract_itr_data():
             logger.info(f"[ITR_EXTRACT] Success in {elapsed:.2f}s")
             return jsonify(result), 200
         else:
-            # Extraction failed — return 200 with empty structured data so the
-            # frontend shows a blank fillable form instead of a hard error.
+            # Extraction failed — return 200 (no CORS issues) but success:false
+            # so the frontend shows "fill manually" instead of "Extracted & Saved"
             logger.warning(f"[ITR_EXTRACT] Extraction failed after {elapsed:.2f}s: {result.get('error', 'unknown')}")
             return jsonify({
-                'success': True,
+                'success': False,
                 'extraction_failed': True,
                 'error': result.get('error', 'Could not extract data — please fill in manually.'),
                 'data': {
