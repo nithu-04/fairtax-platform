@@ -1,4 +1,4 @@
-"""
+﻿"""
 Universal File Handler Service
 
 Converts multiple file formats (PDF, DOCX, images) to standardized image format
@@ -152,7 +152,7 @@ def enhance_image_quality(img, is_scanned=False):
         return img
 
 
-def convert_pdf_to_images(file_bytes, dpi=300):
+def convert_pdf_to_images(file_bytes, dpi=150):
     """
     Convert PDF to list of images with quality enhancement.
 
@@ -191,7 +191,7 @@ def convert_pdf_to_images(file_bytes, dpi=300):
 
                     # Convert to JPEG
                     img_bytes_io = io.BytesIO()
-                    img.save(img_bytes_io, format="JPEG", quality=95)
+                    img.save(img_bytes_io, format="JPEG", quality=85)
                     images.append(img_bytes_io.getvalue())
 
                 except Exception as e:
@@ -241,7 +241,7 @@ def convert_pdf_to_images(file_bytes, dpi=300):
 
                     # Convert to JPEG
                     img_bytes_io = io.BytesIO()
-                    img.save(img_bytes_io, format="JPEG", quality=95)
+                    img.save(img_bytes_io, format="JPEG", quality=85)
                     images.append(img_bytes_io.getvalue())
 
                 except Exception as e:
@@ -295,7 +295,7 @@ def convert_docx_to_images(file_bytes):
 
                     # Convert to JPEG
                     img_bytes_io = io.BytesIO()
-                    img.save(img_bytes_io, format="JPEG", quality=95)
+                    img.save(img_bytes_io, format="JPEG", quality=85)
                     images.append(img_bytes_io.getvalue())
 
                 except Exception as e:
@@ -327,7 +327,7 @@ def convert_docx_to_images(file_bytes):
                             pass
 
                     img_bytes_io = io.BytesIO()
-                    img.save(img_bytes_io, format="JPEG", quality=95)
+                    img.save(img_bytes_io, format="JPEG", quality=85)
                     images.append(img_bytes_io.getvalue())
             except Exception as e:
                 logger.warning(f"Text extraction from DOCX also failed: {str(e)}")
@@ -365,7 +365,7 @@ def convert_image_to_images(file_bytes, mime_type=None):
 
         # Convert to JPEG
         img_bytes_io = io.BytesIO()
-        img.save(img_bytes_io, format="JPEG", quality=95)
+        img.save(img_bytes_io, format="JPEG", quality=85)
 
         logger.info(f"[IMAGE_PROCESSOR] Processed image (scanned={is_scanned})")
         return [img_bytes_io.getvalue()]

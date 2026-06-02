@@ -75,26 +75,25 @@ def call_vision_model(image_bytes, prompt):
 
         # Call OpenAI Vision API with configured model
         response = client.chat.completions.create(
-            model=AI_MODEL,  # Use model from OPENAI_MODEL env var (gpt-4o-mini)
+            model=AI_MODEL,
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": prompt
-                        },
+                        {"type": "text", "text": prompt},
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_base64}"
+                                "url": f"data:image/jpeg;base64,{image_base64}",
+                                "detail": "high"
                             }
                         }
                     ]
                 }
             ],
-            max_tokens=2000,
-            temperature=0.0  # FIXED: Changed from 0.7 to 0.0 for deterministic document extraction
+            max_tokens=700,
+            temperature=0.0,
+            response_format={"type": "json_object"}
         )
 
         result = response.choices[0].message.content

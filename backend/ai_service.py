@@ -165,7 +165,7 @@ CRITICAL RULES:
 }
 
 
-def _call_openai(messages, max_tokens=2000):
+def _call_openai(messages, max_tokens=700, json_mode=True):
     headers = {
         "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
         "Content-Type": "application/json"
@@ -173,10 +173,12 @@ def _call_openai(messages, max_tokens=2000):
     payload = {
         "model": Config.OPENAI_MODEL,
         "messages": messages,
-        "temperature": 0.0,  # FIXED: Changed from 0.1 to 0.0 for deterministic extraction
+        "temperature": 0.0,
         "max_tokens": max_tokens,
     }
-    r = requests.post(Config.OPENAI_URL, headers=headers, json=payload, timeout=120)
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    r = requests.post(Config.OPENAI_URL, headers=headers, json=payload, timeout=35)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
@@ -1237,7 +1239,7 @@ def generate_whatsapp_reply(user_text, phone=None, history=None, max_tokens=800)
             messages.extend(history[-6:])
         messages.append({"role": "user", "content": user_text})
 
-        raw = _call_openai(messages, max_tokens=max_tokens)
+        raw = _call_openai(messages, max_tokens=max_tokens, json_mode=False)
         reply = raw.strip() if isinstance(raw, str) else str(raw)
 
         # Truncate overly long replies for WhatsApp

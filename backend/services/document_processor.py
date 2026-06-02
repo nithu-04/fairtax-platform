@@ -17,7 +17,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Minimum average characters per page to consider a PDF "digital" (not scanned)
-_TEXT_FAST_PATH_MIN_CHARS = 150
+_TEXT_FAST_PATH_MIN_CHARS = 80
 
 # Doc types where text fast-path is safe (well-structured tabular text in digital PDFs)
 _TEXT_FAST_PATH_DOC_TYPES = {"payslip", "form16", "homeloan", "nps", "school", "insurance", "donation"}

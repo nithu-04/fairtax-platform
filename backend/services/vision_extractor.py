@@ -349,81 +349,54 @@ def extract_pass1_vision(image_bytes_list, doc_type):
 
         prompt = _VISION_EXTRACTION_PROMPTS[doc_type]
 
-        # Process each page separately
-        page_results = []
-        errors = []
-
-        blank_pages = []  # Pages with no extractable data (not errors)
-        consecutive_blanks = 0  # Track consecutive blank pages for early stopping
-        MAX_CONSECUTIVE_BLANKS = 5  # Stop after 5 consecutive blank pages
-        MAX_PAGES = 20  # Never process more than 20 pages per document
-
+        # Process pages in parallel for speed
+        # Most ITR docs (payslip, Form16, home loan cert) are 1-3 pages
+        MAX_PAGES = 3
         total_pages = len(image_bytes_list)
         pages_to_process = min(total_pages, MAX_PAGES)
 
         if total_pages > MAX_PAGES:
-            print(f"[VISION_EXTRACTOR][{doc_type}] Large document ({total_pages} pages). Processing first {MAX_PAGES} pages only.")
+            print(f"[VISION_EXTRACTOR][{doc_type}] Capping at {MAX_PAGES} pages (doc has {total_pages}).")
 
-        for page_num, img_bytes in enumerate(image_bytes_list[:pages_to_process], 1):
+        def _extract_page(args):
+            page_num, img_bytes = args
             try:
-                # Call Vision model
                 response = ai_provider.call_vision_model(img_bytes, prompt)
-
-                # Parse JSON response
                 result = _parse_json_strict(response)
-
-                # Empty / unparseable response = page has no relevant data (blank, cover, signature, etc.)
-                # This is NOT an error — just skip the page and continue
                 if not result:
-                    blank_pages.append(page_num)
-                    consecutive_blanks += 1
-                    print(f"[VISION_EXTRACTOR][{doc_type}] Page {page_num}: no extractable data (blank/cover/non-{doc_type})")
-
-                    # Early stop: if we already found some data and hit many blanks, stop
-                    if consecutive_blanks >= MAX_CONSECUTIVE_BLANKS and page_results:
-                        print(f"[VISION_EXTRACTOR][{doc_type}] Early stop: {consecutive_blanks} consecutive blank pages after finding data. Stopping.")
-                        break
-                    continue
-
-                # Validate structure (should have "fields" key with field objects)
-                if "fields" not in result and result:
-                    # Response has top-level field structure, restructure it
+                    return page_num, None, None
+                if "fields" not in result:
                     result = {"fields": result}
-
-                # Filter out fields where all values are null (page had no real data)
                 fields = result.get("fields", {}) or {}
-                non_null_fields = {
-                    k: v for k, v in fields.items()
-                    if isinstance(v, dict) and v.get("value") not in (None, "", 0, "0")
-                }
-
-                if not non_null_fields:
-                    blank_pages.append(page_num)
-                    consecutive_blanks += 1
-                    print(f"[VISION_EXTRACTOR][{doc_type}] Page {page_num}: all fields null (likely non-{doc_type} page)")
-
-                    if consecutive_blanks >= MAX_CONSECUTIVE_BLANKS and page_results:
-                        print(f"[VISION_EXTRACTOR][{doc_type}] Early stop: {consecutive_blanks} consecutive blank pages after finding data. Stopping.")
-                        break
-                    continue
-
-                # Found data — reset consecutive blank counter
-                consecutive_blanks = 0
+                non_null = {k: v for k, v in fields.items()
+                            if isinstance(v, dict) and v.get("value") not in (None, "", 0, "0")}
+                if not non_null:
+                    return page_num, None, None
                 result["_page"] = page_num
-                page_results.append(result)
-
-                print(f"[VISION_EXTRACTOR][{doc_type}] Page {page_num}: {len(non_null_fields)} non-null fields extracted")
-
+                print(f"[VISION_EXTRACTOR][{doc_type}] Page {page_num}: {len(non_null)} fields extracted")
+                return page_num, result, None
             except Exception as e:
-                # Only actual exceptions (API errors, network errors) are errors
-                error_msg = f"Page {page_num} extraction failed: {str(e)}"
-                print(f"[VISION_EXTRACTOR] {error_msg}")
-                print(f"[VISION_EXTRACTOR] Exception type: {type(e).__name__}")
                 import traceback
-                print(f"[VISION_EXTRACTOR] Traceback: {traceback.format_exc()}")
-                errors.append(error_msg)
-                consecutive_blanks += 1
-                continue
+                print(f"[VISION_EXTRACTOR] Page {page_num} error: {traceback.format_exc()}")
+                return page_num, None, str(e)
+
+        from concurrent.futures import ThreadPoolExecutor
+        page_inputs = list(enumerate(image_bytes_list[:pages_to_process], 1))
+
+        with ThreadPoolExecutor(max_workers=min(pages_to_process, 3)) as executor:
+            outcomes = list(executor.map(_extract_page, page_inputs))
+
+        page_results = []
+        blank_pages = []
+        errors = []
+        for page_num, result, err in sorted(outcomes, key=lambda x: x[0]):
+            if err:
+                errors.append(f"Page {page_num}: {err}")
+            elif result is None:
+                blank_pages.append(page_num)
+                print(f"[VISION_EXTRACTOR][{doc_type}] Page {page_num}: no extractable data")
+            else:
+                page_results.append(result)
 
         # If we got at least one page with data, we succeed (even if 90% of pages were blank)
         if not page_results:
