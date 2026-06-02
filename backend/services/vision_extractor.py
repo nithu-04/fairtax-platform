@@ -125,22 +125,38 @@ Rules:
 - hra_received justification MUST list the individual row values you summed
 """,
 
-    "homeloan": """Extract home loan interest certificate / statement data from image.
+    "homeloan": """You are an expert at reading Indian bank home loan documents for tax filing.
+
+CRITICAL: Return ONLY valid JSON. Do NOT include markdown, explanations, or any text outside the JSON.
+
+Extract from the home loan interest certificate / statement / repayment schedule:
+- loan_account_no: Loan account number or reference number
+- bank_name: Name of the bank or NBFC
+- home_loan_interest: Total interest paid during the financial year (annual, for Section 24)
+- home_loan_principal: Total principal repaid during the financial year (annual, for Section 80C)
+- loan_outstanding: Remaining loan balance / outstanding principal
 
 {
   "loan_account_no": {"value": "12345678", "confidence": 0.95, "justification": "Account number field"},
   "bank_name": {"value": "HDFC Bank", "confidence": 0.9, "justification": "Bank name header"},
-  "home_loan_interest": {"value": 250000, "confidence": 0.92, "annual": true, "justification": "Annual interest paid row"},
-  "home_loan_principal": {"value": 500000, "confidence": 0.9, "annual": true, "justification": "Principal repaid row"},
-  "loan_outstanding": {"value": 2500000, "confidence": 0.88, "annual": true, "justification": "Outstanding balance"}
+  "home_loan_interest": {"value": 250000, "confidence": 0.92, "annual": true, "justification": "Interest paid this FY"},
+  "home_loan_principal": {"value": 500000, "confidence": 0.9, "annual": true, "justification": "Principal repaid this FY"},
+  "loan_outstanding": {"value": 2500000, "confidence": 0.88, "justification": "Outstanding balance"}
 }
 
 Rules:
-- ANNUAL figures only
-- All amounts in INR (integers only)
+- ANNUAL figures for the financial year only
+- All amounts in INR integers (no decimals, no commas)
+- Use null for fields not found in the document
 """,
 
-    "school": """Extract school fees / tuition receipt data.
+    "school": """You are an expert at reading Indian school fee receipts for tax filing.
+
+CRITICAL: Return ONLY valid JSON. Do NOT include markdown, explanations, or any text outside the JSON.
+
+Extract from the school fee receipt or tuition fee certificate:
+- school_name: Name of the school
+- school_fees: Total annual tuition fees paid (for Section 80C deduction)
 
 {
   "school_name": {"value": "ABC School", "confidence": 0.95, "justification": "School name at top"},
@@ -148,51 +164,79 @@ Rules:
 }
 
 Rules:
-- ANNUAL total fees (if monthly shown, multiply by 12)
-- All amounts in INR
+- ANNUAL total fees (if monthly shown, multiply by number of months)
+- Amount in INR integers only
+- Use null for fields not found
 """,
 
-    "nps": """Extract NPS (National Pension System) statement data.
+    "nps": """You are an expert at reading Indian NPS (National Pension System) statements for tax filing.
+
+CRITICAL: Return ONLY valid JSON. Do NOT include markdown, explanations, or any text outside the JSON.
+
+Extract from the NPS account statement:
+- nps_pran: PRAN (Permanent Retirement Account Number) — 12-digit number
+- nps_self: Total employee/subscriber contribution for the financial year (for 80CCD(1B))
+- nps_employer: Total employer contribution for the financial year (for 80CCD(2))
 
 {
-  "nps_pran": {"value": "123456789012", "confidence": 0.95, "justification": "PRAN number"},
-  "nps_self": {"value": 50000, "confidence": 0.92, "annual": true, "justification": "Employee contribution"},
-  "nps_employer": {"value": 50000, "confidence": 0.9, "annual": true, "justification": "Employer contribution"}
+  "nps_pran": {"value": "123456789012", "confidence": 0.95, "justification": "PRAN number on statement"},
+  "nps_self": {"value": 50000, "confidence": 0.92, "annual": true, "justification": "Subscriber contribution this FY"},
+  "nps_employer": {"value": 50000, "confidence": 0.9, "annual": true, "justification": "Employer contribution this FY"}
 }
 
 Rules:
-- ANNUAL contribution amounts
-- All amounts in INR
+- ANNUAL contribution amounts for the financial year
+- All amounts in INR integers
+- Use null for fields not found
 """,
 
-    "insurance": """Extract insurance policy / premium receipt data.
+    "insurance": """You are an expert at reading Indian insurance policy documents for tax filing.
+
+CRITICAL: Return ONLY valid JSON. Do NOT include markdown, explanations, or any text outside the JSON.
+
+Extract from the insurance policy / premium receipt:
+- policy_no: Policy number or reference number
+- insurer_name: Insurance company name (LIC, HDFC Life, Max Life, etc.)
+- premium_amount: Annual premium paid (for 80C deduction for life; 80D for health)
+- sum_assured: Sum assured / coverage amount
+- coverage_type: "life" for life/ULIP/term insurance; "health" for mediclaim/health insurance
 
 {
-  "policy_no": {"value": "POL123456", "confidence": 0.95, "justification": "Policy number"},
-  "insurer_name": {"value": "LIC of India", "confidence": 0.9, "justification": "Insurer name"},
-  "premium_amount": {"value": 50000, "confidence": 0.92, "annual": true, "justification": "Annual premium"},
+  "policy_no": {"value": "POL123456", "confidence": 0.95, "justification": "Policy number on document"},
+  "insurer_name": {"value": "LIC of India", "confidence": 0.9, "justification": "Insurer name header"},
+  "premium_amount": {"value": 50000, "confidence": 0.92, "annual": true, "justification": "Annual premium paid"},
   "sum_assured": {"value": 1000000, "confidence": 0.85, "justification": "Sum assured amount"},
-  "coverage_type": {"value": "life", "confidence": 0.9, "justification": "Life insurance policy"}
+  "coverage_type": {"value": "life", "confidence": 0.9, "justification": "Life insurance policy type"}
 }
 
 Rules:
-- ANNUAL premium (convert if monthly)
-- coverage_type: "life" or "health"
+- ANNUAL premium (if installment shown, use annual total)
+- coverage_type MUST be exactly "life" or "health"
+- All amounts in INR integers
+- Use null for fields not found
 """,
 
-    "donation": """Extract donation receipt / 80G certificate data.
+    "donation": """You are an expert at reading Indian donation receipts for tax filing.
+
+CRITICAL: Return ONLY valid JSON. Do NOT include markdown, explanations, or any text outside the JSON.
+
+Extract from the donation receipt / 80G certificate:
+- receipt_number: Receipt or certificate number
+- donation_amount: Amount donated (in INR)
+- organization_name: Name of the organization / trust / NGO
+- donee_pan: PAN number of the organization receiving the donation (required for 80G deduction)
 
 {
-  "receipt_number": {"value": "RCP123456", "confidence": 0.95, "justification": "Receipt number"},
-  "donation_amount": {"value": 100000, "confidence": 0.92, "justification": "Donation amount"},
-  "organization_name": {"value": "NGO Name", "confidence": 0.9, "justification": "Organization name"},
-  "donee_pan": {"value": "XXXXX0001A", "confidence": 0.95, "justification": "Donee PAN number"}
+  "receipt_number": {"value": "RCP123456", "confidence": 0.95, "justification": "Receipt number on certificate"},
+  "donation_amount": {"value": 100000, "confidence": 0.92, "justification": "Donation amount paid"},
+  "organization_name": {"value": "NGO Name", "confidence": 0.9, "justification": "Organization name on receipt"},
+  "donee_pan": {"value": "XXXXX0001A", "confidence": 0.95, "justification": "Donee PAN for 80G"}
 }
 
 Rules:
-- Only 80G-eligible donations
-- Must have valid donee PAN
-- Amount in INR
+- Only extract 80G-eligible donations (must have organization PAN)
+- Amount in INR integers
+- Use null for fields not found
 """
 }
 

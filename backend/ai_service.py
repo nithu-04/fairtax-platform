@@ -99,8 +99,19 @@ Return ONLY valid JSON. All monetary values must be whole integers (no decimals,
 CRITICAL: Use 0 for missing fields. Never invent. Never use monthly column values for YTD payslips."""
 
 INVESTMENT_PROMPTS = {
-    "homeloan": """You are a tax document extractor. Extract from Home Loan Interest Certificate / Statement.
-Return ONLY valid JSON (use 0 if not found):
+    "homeloan": """You are an Indian tax expert extracting home loan data for ITR filing.
+
+Extract the following from this Home Loan Interest Certificate / Repayment Statement / Bank Statement:
+
+home_loan_interest  → Total interest paid in this financial year (for Section 24 deduction)
+                      Look for: "Interest paid", "Interest component", "Total interest", "Interest for the year"
+home_loan_principal → Total principal repaid in this financial year (for Section 80C deduction)
+                      Look for: "Principal paid", "Principal component", "Principal repaid", "Repayment"
+loan_account_no     → Loan account / reference number
+bank_name           → Bank or NBFC name
+loan_outstanding    → Outstanding loan balance (remaining principal)
+
+Return ONLY valid JSON:
 {
   "home_loan_interest": 0,
   "home_loan_principal": 0,
@@ -109,56 +120,91 @@ Return ONLY valid JSON (use 0 if not found):
   "loan_outstanding": 0
 }
 
-CRITICAL RULES:
-• Extract ANNUAL figures only (convert monthly by ×12).
-• Never invent values.
-• If interest and principal both appear, extract both (don't guess which applies).
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• Use the ANNUAL (full financial year) figures only
+• All amounts as plain integers in INR (remove decimals and commas)
+• Use 0 for amounts not found; use "" for text fields not found
+• Never invent or estimate values""",
 
-    "school": """You are a tax document extractor. Extract from School / Tuition Fee receipt.
-Return ONLY valid JSON (use 0 if not found):
+    "school": """You are an Indian tax expert extracting school fee data for ITR filing.
+
+Extract the following from this School Fee Receipt / Tuition Fee Certificate:
+
+school_fees → Total annual tuition/school fees paid (for Section 80C deduction)
+              Look for: "Tuition fees", "School fees", "Annual fees", "Total fees paid"
+school_name → Full name of the school / institution
+
+Return ONLY valid JSON:
 {
   "school_fees": 0,
   "school_name": ""
 }
 
-CRITICAL RULES:
-• Extract ANNUAL total fees (if monthly is given, multiply by 12 and add "×12" to name if ambiguous).
-• Never invent values.
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• Extract ANNUAL total fees (if monthly shown, multiply by 12)
+• school_fees as plain integer in INR
+• Never invent values""",
 
-    "nps": """You are a tax document extractor. Extract from NPS (National Pension System) Statement.
-Return ONLY valid JSON (use 0 if not found):
+    "nps": """You are an Indian tax expert extracting NPS data for ITR filing.
+
+Extract the following from this NPS (National Pension System) Account Statement:
+
+nps_pran     → PRAN number (Permanent Retirement Account Number) — 12-digit number
+nps_self     → Total employee / subscriber contribution for the financial year (for 80CCD(1B))
+               Look for: "Subscriber contribution", "Employee contribution", "Own contribution", "Tier I contribution (self)"
+nps_employer → Total employer contribution for the financial year (for 80CCD(2))
+               Look for: "Employer contribution", "Government contribution", "Corporate contribution"
+
+Return ONLY valid JSON:
 {
   "nps_self": 0,
   "nps_employer": 0,
   "nps_pran": ""
 }
 
-CRITICAL RULES:
-• Extract ANNUAL contribution amounts.
-• Distinguish self vs employer contributions clearly.
-• If contributions vary by month, extract only the most recent full-year total or annotate ambiguity.
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• ANNUAL contribution totals for the financial year
+• All amounts as plain integers in INR
+• Use 0 for amounts not found; use "" for PRAN not found
+• Never invent values""",
 
-    "insurance": """You are a tax document extractor. Extract from Insurance document (LIC / ULIP / Health Insurance).
-Return ONLY valid JSON (use 0 if not found):
+    "insurance": """You are an Indian tax expert extracting insurance data for ITR filing.
+
+Extract the following from this Insurance Policy / Premium Receipt:
+
+policy_no      → Policy number or reference number
+insurer_name   → Insurance company name (LIC, HDFC Life, ICICI Prudential, Max Life, Star Health, etc.)
+premium_amount → Annual premium paid (for 80C if life/ULIP; 80D if health)
+                 Look for: "Premium paid", "Annual premium", "Premium amount", "Amount paid"
+sum_assured    → Sum assured / coverage amount / insured amount
+coverage_type  → "life" for life insurance / term plan / ULIP / endowment (→ 80C)
+                 "health" for mediclaim / health insurance / floater (→ 80D)
+
+Return ONLY valid JSON:
 {
   "policy_no": "",
   "insurer_name": "",
   "premium_amount": 0,
   "sum_assured": 0,
-  "coverage_type": "life or health"
+  "coverage_type": "life"
 }
 
-CRITICAL RULES:
-• Extract ANNUAL premium amount (convert monthly by ×12 if needed).
-• Identify coverage_type as "life" (LIC, ULIP → Section 80C), "health" (mediclaim → Section 80D), or "both".
-• Never invent values.
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• ANNUAL premium (if quarterly/monthly shown, compute annual total)
+• coverage_type must be exactly "life" or "health"
+• All amounts as plain integers in INR
+• Never invent values""",
 
-    "donation": """You are a tax document extractor. Extract from Donation receipt / 80G certificate.
-Return ONLY valid JSON (use 0 if not found):
+    "donation": """You are an Indian tax expert extracting donation data for ITR filing.
+
+Extract the following from this Donation Receipt / 80G Certificate:
+
+donation_amount   → Amount donated in INR
+organization_name → Name of the trust / NGO / organization that received the donation
+donee_pan         → PAN number of the organization (required for 80G deduction) — format: XXXXX9999X
+receipt_number    → Receipt / certificate number
+
+Return ONLY valid JSON:
 {
   "donation_amount": 0,
   "organization_name": "",
@@ -166,11 +212,10 @@ Return ONLY valid JSON (use 0 if not found):
   "receipt_number": ""
 }
 
-CRITICAL RULES:
-• Extract only 80G-eligible donations.
-• Verify donee PAN is present (Section 80G requires valid PAN).
-• Never invent values or PAN.
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• Extract only 80G-eligible donations (must have organization PAN)
+• All amounts as plain integers in INR
+• Never invent values or PAN numbers""",
 }
 
 
