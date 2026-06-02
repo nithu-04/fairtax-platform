@@ -380,6 +380,7 @@ def extract_pass1_vision(image_bytes_list, doc_type):
 
         # ✅ OPTIMIZATION: Process pages in PARALLEL (2-3× faster for multi-page)
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        import time
 
         def _extract_single_page(page_data):
             """Extract data from single page. Returns (page_num, result, extracted_fields)"""
@@ -389,8 +390,15 @@ def extract_pass1_vision(image_bytes_list, doc_type):
                 from services import file_handler
                 img_bytes_compressed = file_handler.compress_image_for_vision(img_bytes, max_width=2000, quality=85)
 
-                # Call Vision model
+                # Call Vision model with timeout (Render has slow network)
+                start = time.time()
                 response = ai_provider.call_vision_model(img_bytes_compressed, prompt)
+                elapsed = time.time() - start
+
+                # If Vision API takes >30s, something is wrong
+                if elapsed > 30:
+                    logger.warning(f"Page {page_num}: Vision API took {elapsed:.1f}s (slow network)")
+
                 result = _parse_json_strict(response)
 
                 # Count non-null fields
@@ -407,7 +415,9 @@ def extract_pass1_vision(image_bytes_list, doc_type):
         page_results = []
         page_errors = []
 
-        with ThreadPoolExecutor(max_workers=min(4, pages_to_process)) as executor:
+        # OPTIMIZATION: Render instances are CPU-constrained, use 2 workers instead of 4
+        max_workers = 2 if pages_to_process > 2 else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all page extraction tasks
             futures = {
                 executor.submit(_extract_single_page, (i, image_bytes_list[i])): i
@@ -416,8 +426,12 @@ def extract_pass1_vision(image_bytes_list, doc_type):
 
             consecutive_blanks = 0
 
-            for future in as_completed(futures):
-                page_num, result, non_null_count = future.result()
+            for future in as_completed(futures, timeout=60):  # 60s timeout per page (Render can be slow)
+                try:
+                    page_num, result, non_null_count = future.result()
+                except Exception as e:
+                    logger.warning(f"Page extraction timeout or error: {str(e)}")
+                    continue
 
                 if result is None or non_null_count == 0:
                     # Blank page
