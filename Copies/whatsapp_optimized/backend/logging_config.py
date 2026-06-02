@@ -40,8 +40,9 @@ class StrictDebugFilter(object):
     def isatty(self):
         return self.original_stderr.isatty()
 
-# Replace stderr IMMEDIATELY
+# Replace BOTH stderr AND stdout IMMEDIATELY
 sys.stderr = StrictDebugFilter(sys.stderr)
+sys.stdout = StrictDebugFilter(sys.stdout)  # Also filter stdout for library debug output
 
 # ===== STEP 4: Configure ONLY app logging (INFO level) =====
 logging.basicConfig(
