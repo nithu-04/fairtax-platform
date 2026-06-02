@@ -1,39 +1,19 @@
+# ===== CRITICAL: Import logging config FIRST (before any other imports) =====
+import logging_config
+import logging
+
 from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_cors import CORS
 from config import Config
 import ai_service, tax_engine, sheets_service, storage_service, manychat_service as whatsapp_service
-import base64, traceback, os, requests as _requests, logging, sys
+import base64, traceback, os, requests as _requests, sys
 from pdf_service import generate_quote_pdf
 from services import document_processor, quality_checker, doc_type_detector
 from extraction_validator import ExtractionValidator
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-# Configure logging for both console and file (for Waitress visibility)
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
-    handlers=[
-        logging.FileHandler('flask_app.log'),
-        logging.StreamHandler(sys.stdout)  # FIXED: Also log to console/Waitress
-    ]
-)
 logger = logging.getLogger(__name__)
-
-# Suppress noisy library logging (urllib3, google, requests, pdfplumber, etc.)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("google").setLevel(logging.WARNING)
-logging.getLogger("googleapiclient").setLevel(logging.WARNING)
-logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("gcloud").setLevel(logging.WARNING)
-logging.getLogger("openai").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("pdfplumber").setLevel(logging.WARNING)
-logging.getLogger("pypdf").setLevel(logging.WARNING)
-logging.getLogger("psparser").setLevel(logging.WARNING)
-logging.getLogger("pdfinterp").setLevel(logging.WARNING)
-logging.getLogger("pdfdocument").setLevel(logging.WARNING)
-logging.getLogger("PIL").setLevel(logging.WARNING)
 
 # Configure Flask to serve frontend files
 # Frontend is in ../frontend relative to this backend directory
@@ -45,26 +25,16 @@ app = Flask(__name__,
 app.secret_key = Config.FLASK_SECRET
 CORS(app)
 
-# Add file handler with proper flushing
-file_handler = logging.FileHandler('flask_app.log', mode='a')
-file_handler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-app.logger.addHandler(file_handler)
-app.logger.setLevel(logging.INFO)
+# Logging already configured in logging_config.py
 
 # Ensure output is flushed immediately (for Waitress)
 sys.stdout.flush()
 sys.stderr.flush()
 try:
     from itr_api import itr_bp
-    print(f"[DEBUG] itr_bp imported: {itr_bp}, url_prefix={itr_bp.url_prefix}")
     app.register_blueprint(itr_bp)
-    print(f"[DEBUG] itr_bp registered with Flask app")
 except Exception as e:
-    print(f"[ERROR] Failed to register itr_bp: {e}")
-    import traceback
-    traceback.print_exc()
+    logger.error(f"Failed to register itr_bp: {e}", exc_info=True)
 
 # Global request logger - log EVERY request with proper logging
 @app.before_request
