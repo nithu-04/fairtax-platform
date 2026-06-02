@@ -139,6 +139,10 @@ def extract_itr_data():
                 file_elapsed = time.time() - file_start
                 print(f"[ITR_EXTRACT] {filename}: {file_elapsed:.2f}s, success={result.get('success')}")
 
+                # DEBUG: Log the full result if extraction failed
+                if not result.get('success'):
+                    print(f"[ITR_EXTRACT] {filename}: FAILED RESULT: {result}")
+
                 detected_doc_type = doc_type
 
                 # AUTO-DETECTION: Only when confidence is very low AND document is small
@@ -193,10 +197,13 @@ def extract_itr_data():
                 return (filename, result, processed_file_info)
 
             except Exception as file_error:
-                print(f"[ITR_EXTRACT] {filename}: ERROR: {str(file_error)}")
+                error_msg = str(file_error)
+                print(f"[ITR_EXTRACT] {filename}: EXCEPTION: {error_msg}")
+                import traceback
+                traceback.print_exc()
                 return (filename, {
                     'success': False,
-                    'error': f'Processing error: {str(file_error)}',
+                    'error': f'Processing error: {error_msg}',
                     'data': {},
                     'filename': filename
                 }, None)

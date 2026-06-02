@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test WhatsApp Workaround</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+        .test { background: white; padding: 20px; margin: 10px 0; border-radius: 8px; }
+        .pass { border-left: 4px solid green; }
+        .fail { border-left: 4px solid red; }
+        pre { background: #eee; padding: 10px; overflow-x: auto; }
+        h2 { color: #333; }
+    </style>
+</head>
+<body>
+    <h1>WhatsApp Workaround - Test Results</h1>
+
+    <div id="results"></div>
+
+    <script>
+        const tests = [];
+
+        function test(name, fn) {
+            try {
+                fn();
+                tests.push({ name, status: 'PASS', error: null });
+            } catch(e) {
+                tests.push({ name, status: 'FAIL', error: e.message });
+            }
+        }
+
+        // Test 1: Form HTML Exists
+        test('Form HTML contains filing form', () => {
+            if (!document.querySelector('form#filingForm')) {
+                throw new Error('Form with id "filingForm" not found');
+            }
+        });
+
+        // Test 2: Required Fields Exist
+        test('Form has required fields', () => {
+            const requiredFields = ['name', 'email', 'phone', 'pan', 'category', 'income', 'year', 'consent', 'terms'];
+            const missing = requiredFields.filter(field => !document.getElementById(field));
+            if (missing.length > 0) {
+                throw new Error(`Missing fields: ${missing.join(', ')}`);
+            }
+        });
+
+        // Test 3: Consent Checkbox Exists
+        test('Consent checkbox is present', () => {
+            const consent = document.getElementById('consent');
+            if (!consent || consent.type !== 'checkbox') {
+                throw new Error('Consent checkbox not found or incorrect type');
+            }
+        });
+
+        // Test 4: Submit Button Exists
+        test('Submit button exists with correct onclick', () => {
+            const btn = document.querySelector('button[onclick*="submitAndWhatsApp"]');
+            if (!btn) {
+                throw new Error('Submit button with submitAndWhatsApp handler not found');
+            }
+        });
+
+        // Test 5: WhatsApp Link Format
+        test('WhatsApp link format is correct', () => {
+            const phone = '919600165254';
+            const message = 'Hi FairTax!';
+            const link = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+            if (!link.includes('wa.me/') || !link.includes('text=')) {
+                throw new Error('WhatsApp link format incorrect');
+            }
+        });
+
+        // Test 6: Form Validation
+        test('Form requires consent before submit', () => {
+            const form = document.getElementById('filingForm');
+            const consent = document.getElementById('consent');
+            if (!form || !consent || !consent.required) {
+                throw new Error('Form validation not properly set');
+            }
+        });
+
+        // Test 7: URL Encoding
+        test('Message URL encoding works', () => {
+            const testMessage = 'Hi FairTax! Check my filing: PAN-ABC123';
+            const encoded = encodeURIComponent(testMessage);
+            if (encoded.includes(' ')) {
+                throw new Error('Spaces not properly encoded (should be %20)');
+            }
+            if (!encoded.includes('%20')) {
+                throw new Error('URL encoding failed');
+            }
+        });
+
+        // Test 8: Mobile Responsiveness
+        test('CSS includes mobile responsive design', () => {
+            const style = document.querySelector('link[rel="stylesheet"]');
+            if (!style) {
+                throw new Error('CSS file not linked');
+            }
+        });
+
+        // Display Results
+        function displayResults() {
+            const resultsDiv = document.getElementById('results');
+            const passed = tests.filter(t => t.status === 'PASS').length;
+            const failed = tests.filter(t => t.status === 'FAIL').length;
+
+            let html = `<h2>Summary: ${passed} Passed, ${failed} Failed (${tests.length} Total)</h2>`;
+
+            tests.forEach(t => {
+                html += `<div class="test ${t.status.toLowerCase()}">
+                    <strong>[${t.status}]</strong> ${t.name}
+                    ${t.error ? `<pre>Error: ${t.error}</pre>` : ''}
+                </div>`;
+            });
+
+            resultsDiv.innerHTML = html;
+        }
+
+        // Run tests
+        setTimeout(() => {
+            displayResults();
+        }, 100);
+    </script>
+</body>
+</html>

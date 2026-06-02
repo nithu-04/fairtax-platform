@@ -1,0 +1,28 @@
+[OK] AI Document Extractor initialized successfully
+[DEBUG] itr_bp imported: <Blueprint 'itr'>, url_prefix=/api/itr
+[DEBUG] itr_bp registered with Flask app
+[2026-05-31 18:51:54,700] DEBUG in win32: Looking up time zone info from registry
+[2026-05-31 18:51:54,737] INFO in base: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+[2026-05-31 18:51:54,761] INFO in base: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+[2026-05-31 18:51:54,766] INFO in base: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+[2026-05-31 18:51:54,771] INFO in base: Added job "3-day Payment Reminders" to job store "default"
+[2026-05-31 18:51:54,772] INFO in base: Added job "Referral Status Updates" to job store "default"
+[2026-05-31 18:51:54,773] INFO in base: Added job "Filing Completion Notifications" to job store "default"
+[2026-05-31 18:51:54,773] INFO in base: Scheduler started
+[Scheduler] Could not start: 'charmap' codec can't encode character '\u2705' in position 12: character maps to <undefined>
+[2026-05-31 18:51:54,793] DEBUG in base: Looking for jobs to run
+
+    ========================================================
+    FairTax Backend - Waitress WSGI Server
+    ========================================================
+
+    Starting Waitress server...
+    [OK] Host: 0.0.0.0
+    [OK] Port: 5000
+    [OK] Threads: 4
+
+    Navigate to http://localhost:5000
+    Press CTRL+C to stop
+    
+[2026-05-31 18:51:55,039] DEBUG in base: Next wakeup is due at 2026-06-01 00:51:54.766974+05:30 (in 21599.727683 seconds)
+[2026-05-31 18:51:54,842] INFO in wasyncore: Serving on http://0.0.0.0:5000

@@ -72,21 +72,41 @@ class AIDocumentExtractor:
     def extract_from_pdf(self, file_bytes: bytes, doc_type: str = "form16") -> Dict[str, Any]:
         """Extract ITR data from PDF using Vision model."""
         try:
+            print(f"[EXTRACT] Starting extraction for doc_type={doc_type}, file_size={len(file_bytes)} bytes")
             result = document_processor.process_documents(file_bytes, "application/pdf", doc_type=doc_type)
 
+            print(f"[EXTRACT] Result received: success={result.get('success')}, keys={list(result.keys())}")
+
             if not result["success"]:
+                error_detail = result.get("error", "Vision extraction failed")
+                print(f"[EXTRACT] Extraction failed: {error_detail}")
+
+                # Write error to file for debugging
+                with open("extraction_errors.log", "a") as f:
+                    f.write(f"PDF extraction failed for {doc_type}: {error_detail}\n")
+                    f.write(f"Full result: {result}\n\n")
+
                 return {
                     'success': False,
                     'data': {},
-                    'errors': {'extraction': [result.get("error", "Vision extraction failed")]},
+                    'errors': {'extraction': [error_detail]},
                     'raw_text': '',
                 }
 
+            print(f"[EXTRACT] Extraction successful, data keys: {list(result.get('data', {}).keys())}")
             return self._build_response(result)
 
         except Exception as e:
             error_msg = f"Vision extraction failed: {str(e)}"
             print(f"[ERROR] {error_msg}")
+
+            # Write to file
+            with open("extraction_errors.log", "a") as f:
+                f.write(f"PDF extraction exception: {error_msg}\n")
+                import traceback
+                f.write(traceback.format_exc())
+                f.write("\n\n")
+
             return {
                 'success': False,
                 'data': {},

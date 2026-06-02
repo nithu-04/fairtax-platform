@@ -1,0 +1,609 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FairTax — Free ITR Filing + Referral Rewards</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://unpkg.com/aos@2.3.4/dist/aos.css" />
+
+    <link rel="stylesheet" href="css/shared-components.css" />
+    <link rel="stylesheet" href="style.css?v=12" />
+    <link rel="stylesheet" href="css/landing-v2.css" />
+    <link rel="stylesheet" href="css/referral-v2.css" />
+    <link rel="stylesheet" href="css/index-v2.css" />
+    <link rel="stylesheet" href="css/referral-filing-v2.css" />
+  </head>
+  <body class="rf-page">
+    <!-- ══════════════════ HEADER ══════════════════ -->
+    <header class="lv2-header">
+      <div class="lv2-header-inner">
+        <a href="index.html" class="lv2-logo">
+          <div class="lv2-logo-icon">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+              <rect width="40" height="40" rx="9" fill="#0B2545" />
+              <path
+                d="M20 9L12 14v8c0 6 4 10 8 11.5C24 21.5 28 17.5 28 12V14L20 9z"
+                fill="white"
+                opacity="0.92"
+              />
+              <path
+                d="M17 20.5l2.5 2.5 4-5"
+                stroke="#0B2545"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="lv2-logo-text">
+            <div class="lv2-logo-name">
+              <span class="lv2-logo-fair">FAIRTAX</span>
+              <span class="lv2-logo-advisors">ADVISORS</span>
+            </div>
+            <div class="lv2-logo-tagline">
+              Your Taxes. Our Expertise. Your Peace of Mind.
+            </div>
+          </div>
+        </a>
+        <nav class="lv2-nav">
+        <a href="index.html" class="lv2-nav-link">Home</a>
+        <a href="filing.html" class="lv2-nav-link active">File Returns</a>
+        <a href="referral-offer.html" class="lv2-nav-link">Referral Offer</a>
+        <a href="training.html" class="lv2-nav-link">Training</a>
+        <a href="wallet.html" class="lv2-nav-link">Wallet</a>
+        <a href="status.html" class="lv2-nav-link">Status</a>
+        <a href="proofs.html" class="lv2-nav-link">Proofs</a>
+        <a href="about.html" class="lv2-nav-link">About</a>
+      </nav>
+        <div class="lv2-header-right">
+          <a
+            href="https://wa.me/917397510254"
+            class="lv2-phone"
+            target="_blank"
+            rel="noopener"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.64A2 2 0 012 .27 2 2 0 013.86.27H7a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 14.92z"
+              />
+            </svg>
+            +91 73975 10254
+          </a>
+          <a href="choice.html" class="lv2-btn-started">Get Started</a>
+        </div>
+        <button
+          class="lv2-hamburger"
+          aria-label="Toggle menu"
+          aria-expanded="false"
+        >
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+      <nav class="lv2-mobile-nav" id="lv2MobileNav">
+      <a href="index.html" class="lv2-mobile-link">Home</a>
+      <a href="filing.html" class="lv2-mobile-link active">File Returns</a>
+      <a href="referral-offer.html" class="lv2-mobile-link">Referral Offer</a>
+      <a href="training.html" class="lv2-mobile-link">Training</a>
+      <a href="wallet.html" class="lv2-mobile-link">Wallet</a>
+      <a href="status.html" class="lv2-mobile-link">Status</a>
+      <a href="proofs.html" class="lv2-mobile-link">Proofs</a>
+      <a href="about.html" class="lv2-mobile-link">About</a>
+      <a href="contact.html" class="lv2-mobile-link">Contact</a>
+      <a href="faqs.html" class="lv2-mobile-link">FAQs</a>
+    </nav>
+    </header>
+
+    <main>
+      <!-- ══════════════════════════════════════════
+     HERO
+══════════════════════════════════════════ -->
+      <section class="ref-hero rf-hero">
+        <div class="ref-blob ref-blob-1" aria-hidden="true"></div>
+        <div class="ref-blob ref-blob-2" aria-hidden="true"></div>
+        <div class="ref-blob ref-blob-3" aria-hidden="true"></div>
+
+        <div class="ref-hero-inner">
+          <div
+            class="rf-hero-badge"
+            data-aos="fade-down"
+            data-aos-duration="600"
+          >
+            <span class="rf-badge-dot"></span>
+            Free Filing + Referral Rewards
+          </div>
+
+          <h1
+            class="ref-hero-h1 rf-hero-h1"
+            data-aos="fade-up"
+            data-aos-delay="100"
+          >
+            File ITR Free —<br />
+            Refer 5 &amp; <span class="grad-violet">Earn ₹15K.</span>
+          </h1>
+
+          <p class="ref-hero-sub" data-aos="fade-up" data-aos-delay="180">
+            Refer 5 friends, get your income tax return filed completely free.
+            Plus earn up to ₹15,000 in referral cashback — paid every Thursday.
+          </p>
+
+          <div class="ref-hero-stats" data-aos="fade-up" data-aos-delay="260">
+            <div class="ref-stat">
+              <span class="ref-stat-val" style="color: #a78bfa">5</span>
+              <span class="ref-stat-label">Referrals = Free Filing</span>
+            </div>
+            <div class="ref-stat">
+              <span class="ref-stat-val" style="color: #93C5FD">₹15K</span>
+              <span class="ref-stat-label">Max Cashback</span>
+            </div>
+            <div class="ref-stat">
+              <span class="ref-stat-val" style="color: #10B981">24h</span>
+              <span class="ref-stat-label">Expert Review</span>
+            </div>
+            <div class="ref-stat">
+              <span class="ref-stat-val" style="color: #fbbf24">7</span>
+              <span class="ref-stat-label">Easy Steps</span>
+            </div>
+          </div>
+
+          <div class="ref-ctas" data-aos="fade-up" data-aos-delay="340">
+            <a
+              href="#taxForm"
+              class="ref-cta-primary"
+              onclick="scrollToForm()"
+              style="cursor: pointer"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+              Start Free Filing
+            </a>
+            <a href="filing.html" class="ref-cta-secondary"
+              >Switch to Regular Filing →</a
+            >
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════════════════════════════════════
+     MULTI-STEP FORM
+══════════════════════════════════════════ -->
+      <div class="progress"><div id="bar"></div></div>
+      <div class="step-label" id="stepLabel">Step 1 of 7</div>
+
+      <form id="taxForm">
+        <!-- STEP 1 — Referral Filing: Your Details + 5 Referrals -->
+        <section class="step active" data-step="1">
+          <h2>Free Tax Filing — Refer 5 Friends</h2>
+          <p style="color: #6b7280; margin-bottom: 20px">
+            Fill your details and add 5 referrals to get free filing + ₹5,000
+            bonus.
+            <a href="filing.html" style="color: #1A56DB; font-weight: 600"
+              >Switch to Regular Filing &rarr;</a
+            >
+          </p>
+
+          <div id="freeReferralSection" style="display: block">
+            <h3>Your Personal Details</h3>
+            <p class="hint">
+              Your information + 5 referrals (name + phone). All phones should
+              be 10 digits.
+            </p>
+            <div class="grid">
+              <label
+                >Your Name
+                <input
+                  name="referrer_name"
+                  placeholder="Your full name"
+                  required
+              /></label>
+              <label
+                >Your Phone
+                <input
+                  name="referrer_phone"
+                  placeholder="Your phone"
+                  pattern="\d{10}"
+                  required
+              /></label>
+              <label
+                >Your Email
+                <input
+                  name="email"
+                  placeholder="Your email"
+                  type="email"
+                  required
+              /></label>
+              <label
+                >Your PAN
+                <input
+                  name="pan"
+                  placeholder="PAN (e.g., ABCDE1234F)"
+                  pattern="[A-Z]{5}[0-9]{4}[A-Z]"
+                  style="text-transform: uppercase"
+                  required
+              /></label>
+              <label style="grid-column: 1 / -1"
+                >City Type (for HRA calculation)
+                <select name="city_type" required>
+                  <option value="">-- Select City Type --</option>
+                  <option value="metro">Metro</option>
+                  <option value="non-metro">Non-Metro</option>
+                </select>
+              </label>
+            </div>
+
+            <hr
+              style="margin: 20px 0; border: none; border-top: 1px solid #ddd"
+            />
+            <h3>Add 5 Referrals</h3>
+            <p class="hint">Refer 5 people to get free filing + ₹5,000 bonus</p>
+            <div id="referralsList">
+              <div class="grid" id="refInputs">
+                <label
+                  >Ref 1 Name <input name="ref_name_1" placeholder="Name"
+                /></label>
+                <label
+                  >Ref 1 Phone
+                  <input
+                    name="ref_phone_1"
+                    placeholder="Phone"
+                    pattern="\d{10}"
+                /></label>
+                <label
+                  >Ref 2 Name <input name="ref_name_2" placeholder="Name"
+                /></label>
+                <label
+                  >Ref 2 Phone
+                  <input
+                    name="ref_phone_2"
+                    placeholder="Phone"
+                    pattern="\d{10}"
+                /></label>
+                <label
+                  >Ref 3 Name <input name="ref_name_3" placeholder="Name"
+                /></label>
+                <label
+                  >Ref 3 Phone
+                  <input
+                    name="ref_phone_3"
+                    placeholder="Phone"
+                    pattern="\d{10}"
+                /></label>
+                <label
+                  >Ref 4 Name <input name="ref_name_4" placeholder="Name"
+                /></label>
+                <label
+                  >Ref 4 Phone
+                  <input
+                    name="ref_phone_4"
+                    placeholder="Phone"
+                    pattern="\d{10}"
+                /></label>
+                <label
+                  >Ref 5 Name <input name="ref_name_5" placeholder="Name"
+                /></label>
+                <label
+                  >Ref 5 Phone
+                  <input
+                    name="ref_phone_5"
+                    placeholder="Phone"
+                    pattern="\d{10}"
+                /></label>
+              </div>
+            </div>
+
+            <div
+              style="margin-top: 32px; margin-bottom: 8px; text-align: center; position: relative"
+            >
+              <button
+                type="button"
+                id="jokerPlayBtn"
+                class="joker-play-btn"
+              >
+                <svg class="joker-btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                </svg>
+                <span class="joker-text">Claim Free Filing</span>
+              </button>
+              <p class="rf-unlock-hint">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;margin-right:4px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Fill all 5 referrals to unlock
+              </p>
+            </div>
+
+          </div>
+
+          <input type="hidden" name="filing_type" value="free" />
+          <input type="hidden" name="referral_code" value="" />
+        </section>
+
+
+        <div class="nav">
+          <button type="button" id="prev">Back</button>
+          <button type="button" id="next">Next</button>
+          <button type="button" id="submit" style="display: none">
+            Submit
+          </button>
+        </div>
+      </form>
+
+      <!-- ══════════════════════════════════════════
+     BOTTOM CTA
+══════════════════════════════════════════ -->
+      <div class="ref-footer-cta">
+        <div class="ref-blob ref-blob-1" aria-hidden="true"></div>
+        <div class="ref-blob ref-blob-2" aria-hidden="true"></div>
+        <div class="ref-footer-cta-inner" data-aos="fade-up">
+          <h2>Questions? We're Here 24/7</h2>
+          <p>
+            Our tax experts are available on WhatsApp anytime. Get instant
+            answers about your filing, referral rewards, or payment options.
+          </p>
+          <a
+            href="https://wa.me/917397510254"
+            class="ref-cta-primary"
+            style="font-size: 16px; padding: 17px 38px"
+            target="_blank"
+            rel="noopener"
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"
+              />
+            </svg>
+            Chat on WhatsApp
+          </a>
+        </div>
+      </div>
+    </main>
+
+    <!-- ══════════════════ FOOTER ══════════════════ -->
+    <footer class="lv2-footer">
+  <div class="lv2-footer-top">
+    <div class="lv2-footer-brand">
+      <a href="index.html" class="lv2-footer-logo">
+        <svg width="36" height="36" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="10" fill="#1A56DB"/>
+          <path d="M20 10L10 15v10l10 5 10-5V15L20 10z" fill="#10B981"/>
+          <path d="M16 20l3 3 6-6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div class="lv2-footer-brand-text">
+          <div class="lv2-footer-brand-name">
+            <span class="lv2-footer-brand-fair">FAIRTAX</span>
+            <span class="lv2-footer-brand-advisors">ADVISORS</span>
+          </div>
+          <div class="lv2-footer-brand-tagline">Your Taxes. Our Expertise.</div>
+        </div>
+      </a>
+      <p class="lv2-footer-desc">AI-powered ITR filing platform trusted by 2 lakh+ Indians. Accurate, secure, and expert-assisted.</p>
+      <div class="lv2-footer-contact">
+        <a href="https://wa.me/917397510254" class="lv2-footer-contact-item" target="_blank" rel="noopener">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.64A2 2 0 012 .27 2 2 0 013.86.27H7a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 14.92z"/></svg>
+          +91 7397 510 254
+        </a>
+        <a href="mailto:fairtaxadvisors@gmail.com" class="lv2-footer-contact-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          fairtaxadvisors@gmail.com
+        </a>
+        <span class="lv2-footer-contact-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          Mumbai, Maharashtra, India
+        </span>
+      </div>
+    </div>
+
+    <div class="lv2-footer-col">
+      <h5>Company</h5>
+      <ul>
+        <li><a href="index.html">Home</a></li>
+        <li><a href="about.html">About Us</a></li>
+        <li><a href="contact.html">Contact Us</a></li>
+        <li><a href="training.html">Training</a></li>
+      </ul>
+    </div>
+
+    <div class="lv2-footer-col">
+      <h5>Resources</h5>
+      <ul>
+        <li><a href="faqs.html">FAQs</a></li>
+        <li><a href="proofs.html">Proofs & Grievance</a></li>
+        <li><a href="status.html">Filing Status</a></li>
+        <li><a href="referral-offer.html">Refer & Earn</a></li>
+      </ul>
+    </div>
+
+    <div class="lv2-footer-col">
+      <h5>Legal</h5>
+      <ul>
+        <li><a href="privacy-policy.html">Privacy Policy</a></li>
+        <li><a href="terms-of-service.html">Terms of Service</a></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="lv2-footer-bottom">
+    <div class="lv2-footer-copy">© 2024-2025 FairTax Advisors. All rights reserved. | Secure • AI-Powered • Expert-Reviewed</div>
+    <div class="lv2-footer-badges">
+      <span class="lv2-footer-badge">Secure</span>
+      <span class="lv2-footer-badge">AI-Powered</span>
+      <span class="lv2-footer-badge">Expert Verified</span>
+    </div>
+  </div>
+</footer>
+
+    <!-- Freelancer CTA -->
+    <a
+      class="freelancer-cta"
+      href="https://wa.me/917397510254?text=I+want+to+join+as+a+FairTax+Freelancer+and+earn+more!"
+      target="_blank"
+      rel="noopener"
+    >
+      <span class="fl-star">&#11088;</span>
+      <span class="fl-text">Why not join us<br />as a Freelancer?</span>
+    </a>
+
+    <!-- Winners widget -->
+    <div id="winnersWidget" class="winners-widget">
+      <h4>Weekly Winners</h4>
+      <ul id="winnersList">
+        <li>Loading...</li>
+      </ul>
+      <a href="#" id="seeAllWinners">See all</a>
+    </div>
+
+    <!-- Camera modal -->
+    <div id="cameraModal" class="modal" style="display: none">
+      <div class="modal-content">
+        <video id="cameraVideo" autoplay playsinline></video>
+        <canvas id="cameraCanvas" style="display: none"></canvas>
+        <div class="modal-actions">
+          <button id="captureBtn">Capture</button>
+          <button id="closeCamera">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Joker reveal modal -->
+    <div id="jokerModal" class="joker-modal" style="display: none">
+      <div class="joker-modal-content">
+        <span class="joker-face"></span>
+        <h2 class="joker-title">CONGRATULATIONS!</h2>
+        <p class="joker-msg">
+          You are the <b>6th Person</b> — your fees is <b>absolutely FREE!</b>
+        </p>
+        <div class="joker-code" id="jokerRevealCode">—</div>
+        <p style="color: #93C5FD; margin: 10px 0; font-size: 13px">
+          Share your referral code and earn up to <b>₹15,000</b> cashback!
+        </p>
+        <button
+          class="joker-close-btn"
+          onclick="document.getElementById('jokerModal').style.display = 'none'; document.getElementById('next').scrollIntoView({behavior:'smooth'})"
+        >
+          Continue to Filing →
+        </button>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/aos@2.3.4/dist/aos.js"></script>
+    <script src="app.js?v=5"></script>
+
+    <!-- Override filing type to FREE for this page + redirect logic -->
+    <script>
+      filingType = "free";
+      var ftHidden = document.querySelector('[name="filing_type"]');
+      if (ftHidden) ftHidden.value = "free";
+
+      /* ── Hide progress bar (single-step page, no stepper needed) ── */
+      (function() {
+        var bar = document.querySelector('.progress');
+        var label = document.getElementById('stepLabel');
+        if (bar) bar.style.display = 'none';
+        if (label) label.style.display = 'none';
+      })();
+
+      /* ── Change Next button to "Continue to Filing →" and redirect ── */
+      (function() {
+        var nextBtn = document.getElementById('next');
+        if (!nextBtn) return;
+        nextBtn.textContent = 'Continue to Filing →';
+
+        nextBtn.onclick = async function() {
+          // Validate Step 1 (required fields)
+          if (!validateStep(1)) return;
+
+          // Ensure referral code was generated (submission already created by revealReferralCode)
+          if (!referralCode && !localStorage.getItem('referral_code')) {
+            alert('Please click "Reveal Code" to generate your referral code first.');
+            return;
+          }
+
+          // Collect Step 1 data for handoff to regular-filing.html
+          var s1 = collectStep(1);
+          s1._referral_handoff = true;
+          sessionStorage.setItem('referral_handoff', JSON.stringify(s1));
+
+          // Redirect to regular filing flow (Steps 2-7 handled there)
+          window.location.href = 'regular-filing.html?from=referral';
+        };
+      })();
+    </script>
+
+    <script>
+      function scrollToForm() {
+        var el = document.getElementById("taxForm");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      /* ── Winners widget ── */
+      (async function loadWinners() {
+        try {
+          const r = await fetch(
+            "https://fairtax-backend.onrender.com/api/winners",
+          );
+          const j = await r.json();
+          const list = document.getElementById("winnersList");
+          list.innerHTML = "";
+          (j.winners || []).forEach((w) => {
+            const li = document.createElement("li");
+            li.textContent = `${w.name} — ${w.reward}`;
+            list.appendChild(li);
+          });
+        } catch (e) {
+          /* ignore */
+        }
+      })();
+
+      /* ── AOS ── */
+      AOS.init({
+        duration: 700,
+        easing: "ease-out-cubic",
+        once: true,
+        offset: 60,
+      });
+
+      /* ── Mobile nav ── */
+      (function () {
+        const btn = document.querySelector(".lv2-hamburger");
+        const nav = document.getElementById("lv2MobileNav");
+        if (!btn || !nav) return;
+        btn.addEventListener("click", function () {
+          const open = btn.getAttribute("aria-expanded") === "true";
+          btn.setAttribute("aria-expanded", String(!open));
+          btn.classList.toggle("open");
+          nav.classList.toggle("open");
+        });
+        nav.querySelectorAll(".lv2-mobile-link").forEach((l) => {
+          l.addEventListener("click", () => {
+            btn.setAttribute("aria-expanded", "false");
+            btn.classList.remove("open");
+            nav.classList.remove("open");
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
