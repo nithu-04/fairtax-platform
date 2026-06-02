@@ -215,24 +215,36 @@ function validateStep(n) {
 }
 
 // ── SAVE PHASE (collect current step data and persist to backend) ──────
+function showToast(msg, type = "warn") {
+  let toast = document.getElementById("_saveToast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "_saveToast";
+    toast.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;padding:12px 22px;border-radius:12px;font-size:14px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.25);transition:opacity .4s;pointer-events:none;";
+    document.body.appendChild(toast);
+  }
+  toast.style.background = type === "error" ? "#dc2626" : type === "success" ? "#10B981" : "#f59e0b";
+  toast.style.color = "#fff";
+  toast.textContent = msg;
+  toast.style.opacity = "1";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { toast.style.opacity = "0"; }, 3500);
+}
+
 async function savePhase(extraData) {
   try {
-    // Collect all form data from current step (unless extraData was passed)
     let stepData = extraData || collectStep(currentStep);
 
-    // Ensure filing_type/filing_category is set for regular filings
     if (filingType === "regular" && !stepData.filing_category) {
       stepData.filing_category = "regular";
     } else if (filingType === "free" && !stepData.filing_category) {
       stepData.filing_category = "free";
     }
 
-    // If we have a submission ID, include it
     if (submissionId) {
       stepData.submission_id = submissionId;
     }
 
-    // Send to backend
     const r = await fetch(`${API}/save-phase`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -242,18 +254,17 @@ async function savePhase(extraData) {
     const j = await r.json();
 
     if (!j.success) {
-      console.error("[SAVE_PHASE] Error:", j.error);
-      throw new Error(j.error || "Failed to save");
+      console.error("[SAVE_PHASE] Server error:", j.error);
+      showToast("⚠️ Could not save progress — you can still continue.", "warn");
+      return null;
     }
 
-    // Store the submission ID for future steps
     if (j.submission_id) {
       submissionId = j.submission_id;
       localStorage.setItem("submission_id", submissionId);
       console.log("[SAVE_PHASE] ✅ Saved. submission_id =", submissionId);
     }
 
-    // Store referral code if backend returned one
     if (j.referral_code) {
       referralCode = j.referral_code;
       localStorage.setItem("referral_code", referralCode);
@@ -263,9 +274,10 @@ async function savePhase(extraData) {
 
     return j;
   } catch (e) {
-    console.error("[SAVE_PHASE] Exception:", e);
-    alert("Error saving your progress: " + e.message);
-    throw e; // Re-throw so caller knows it failed
+    // Network error (backend unreachable / Render cold start) — don't block user
+    console.warn("[SAVE_PHASE] Network error (will retry on next step):", e.message);
+    showToast("⚠️ Server is waking up — your data is safe, please continue.", "warn");
+    return null;
   }
 }
 
@@ -620,9 +632,7 @@ async function revealReferralCode() {
         localStorage.setItem("submission_id", submissionId);
       }
     } catch (e) {
-      console.error("Failed to create submission:", e);
-      alert("Failed to save your details. Please try again.");
-      return;
+      console.warn("Failed to create submission (non-blocking):", e);
     }
   }
 
@@ -955,7 +965,7 @@ $("#next").onclick = async () => {
           return;
         }
 
-        // Save submission for REGULAR filing
+        // Save submission for REGULAR filing (failure is non-blocking)
         await savePhase();
       } else if (filingType === "free") {
         // For FREE filing, auto-save Step 1 to generate referral code with correct name
@@ -988,9 +998,7 @@ $("#next").onclick = async () => {
               city_type: s1.city_type,
             });
           } catch (e) {
-            console.error("Step 1 auto-save failed:", e);
-            alert("Failed to save your details. Please try again.");
-            return;
+            console.warn("Step 1 auto-save failed (non-blocking):", e);
           }
         }
         // Submission created via auto-save above
