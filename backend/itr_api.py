@@ -4,7 +4,7 @@ Integrates with the ITR document processor.
 """
 
 from flask import Blueprint, request, jsonify
-from itr_extractor import ITRDocumentProcessor
+from flask_cors import CORS
 import os
 from datetime import datetime
 import storage_service
@@ -12,9 +12,17 @@ import sheets_service
 from werkzeug.utils import secure_filename
 
 itr_bp = Blueprint('itr', __name__, url_prefix='/api/itr')
+CORS(itr_bp, origins="*")  # explicit CORS for this blueprint
 
-# Initialize the processor
-processor = ITRDocumentProcessor(use_ocr=True)
+# Lazy-initialize processor to prevent module-level failures breaking registration
+_processor = None
+
+def _get_processor():
+    global _processor
+    if _processor is None:
+        from itr_extractor import ITRDocumentProcessor
+        _processor = ITRDocumentProcessor(use_ocr=True)
+    return _processor
 
 # DEBUG: Test endpoint to verify blueprint is working
 @itr_bp.route('/test', methods=['GET'])
@@ -135,7 +143,7 @@ def extract_itr_data():
 
                 # Process document with specified doc_type
                 file_start = time.time()
-                result = processor.process_file(file_bytes, filename, doc_type=doc_type)
+                result = _get_processor().process_file(file_bytes, filename, doc_type=doc_type)
                 file_elapsed = time.time() - file_start
                 print(f"[ITR_EXTRACT] {filename}: {file_elapsed:.2f}s, success={result.get('success')}")
 
@@ -161,7 +169,7 @@ def extract_itr_data():
                         if test_type == doc_type:
                             continue
                         try:
-                            test_result = processor.process_file(file_bytes, filename, doc_type=test_type)
+                            test_result = _get_processor().process_file(file_bytes, filename, doc_type=test_type)
                             test_confidence = test_result.get("confidence", 0)
 
                             print(f"[ITR_EXTRACT] {filename} as {test_type}: confidence={test_confidence}")
@@ -410,7 +418,7 @@ def extract_batch():
         for file in files:
             try:
                 file_bytes = file.read()
-                result = processor.process_file(file_bytes, file.filename)
+                result = _get_processor().process_file(file_bytes, file.filename)
                 results.append({
                     'filename': file.filename,
                     'success': result['success'],
@@ -471,7 +479,7 @@ def validate_data():
                 'errors': {},
             }), 400
 
-        errors = processor.validator.validate(data)
+        errors = _get_processor().validator.validate(data)
         is_valid = len(errors) == 0
 
         return jsonify({
@@ -493,6 +501,6 @@ def health_check():
     """Health check endpoint."""
     return jsonify({
         'status': 'healthy',
-        'ocr_available': processor.use_ocr,
+        'ocr_available': _get_processor().use_ocr,
         'timestamp': datetime.now().isoformat(),
     }), 200
