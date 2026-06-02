@@ -4,7 +4,6 @@ Integrates with the ITR document processor.
 """
 
 from flask import Blueprint, request, jsonify
-from flask_cors import CORS
 import os
 from datetime import datetime
 import storage_service
@@ -12,7 +11,19 @@ import sheets_service
 from werkzeug.utils import secure_filename
 
 itr_bp = Blueprint('itr', __name__, url_prefix='/api/itr')
-CORS(itr_bp, origins="*")  # explicit CORS for this blueprint
+
+@itr_bp.after_request
+def _cors(response):
+    response.headers.setdefault('Access-Control-Allow-Origin', '*')
+    response.headers.setdefault('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    response.headers.setdefault('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    return response
+
+@itr_bp.route('/extract', methods=['OPTIONS'])
+@itr_bp.route('/test', methods=['OPTIONS'])
+@itr_bp.route('/health', methods=['OPTIONS'])
+def _options():
+    return '', 200
 
 # Lazy-initialize processor to prevent module-level failures breaking registration
 _processor = None
