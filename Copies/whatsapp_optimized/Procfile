@@ -1,1 +1,1 @@
-web: bash start.sh
+web: cd backend && python -c "import logging_config; from wsgi import app; from waitress import serve; serve(app, host='0.0.0.0', port=int(__import__('os').getenv('PORT', 5000)), threads=4)"
