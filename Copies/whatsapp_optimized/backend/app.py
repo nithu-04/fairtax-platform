@@ -20,6 +20,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress noisy library logging (urllib3, google, requests, etc.)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("googleapiclient").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("gcloud").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # Configure Flask to serve frontend files
 # Frontend is in ../frontend relative to this backend directory
 frontend_path = os.path.join(os.path.dirname(__file__), '..', 'frontend')

@@ -4,6 +4,15 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 import logging
 logging.basicConfig(level=logging.INFO)
 
+# Suppress noisy library logging
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("googleapiclient").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("gcloud").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 from app import app
 
 @app.before_request
