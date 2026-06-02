@@ -321,30 +321,29 @@ def extract_itr_data():
         elapsed = time.time() - start_time
         if result['success']:
             logger.info(f"[ITR_EXTRACT] Success in {elapsed:.2f}s")
-            response = jsonify(result)
-            logger.info(f"[ITR_EXTRACT] Returning 200 response")
-            return response, 200
+            return jsonify(result), 200
         else:
-            logger.error(f"[ITR_EXTRACT] Failed after {elapsed:.2f}s")
-            logger.error(f"[ITR_EXTRACT] Result keys: {result.keys()}")
-            logger.error(f"[ITR_EXTRACT] Error message: {result.get('error', 'Unknown error')}")
-
-            response_dict = {
-                'success': False,
-                'error': result.get('error', 'Extraction failed - no valid data extracted'),
-                'data': result.get('data', {}),
-                'metadata': {**result.get('metadata', {}), 'elapsed_seconds': round(elapsed, 2)}
-            }
-
-            logger.error(f"[ITR_EXTRACT] Building 400 response")
-            try:
-                response = jsonify(response_dict)
-                logger.error(f"[ITR_EXTRACT] Response created successfully, returning 400")
-                return response, 400
-            except Exception as e:
-                logger.error(f"[ITR_EXTRACT] ERROR creating response: {str(e)}", exc_info=True)
-                # Fallback minimal response
-                return jsonify({'success': False, 'error': 'Response encoding error'}), 400
+            # Extraction failed — return 200 with empty structured data so the
+            # frontend shows a blank fillable form instead of a hard error.
+            logger.warning(f"[ITR_EXTRACT] Extraction failed after {elapsed:.2f}s: {result.get('error', 'unknown')}")
+            return jsonify({
+                'success': True,
+                'extraction_failed': True,
+                'error': result.get('error', 'Could not extract data — please fill in manually.'),
+                'data': {
+                    'personal': {'pan': '', 'name': ''},
+                    'income': {
+                        'gross_salary': 0, 'basic_salary': 0, 'hra_received': 0,
+                        'tds_paid': 0, 'pf_employee': 0, 'pf_employer': 0,
+                        'professional_tax': 0, 'lta': 0, 'special_allowance': 0,
+                        'car_lease_allowance': 0, 'uniform_allowance': 0,
+                        'gratuity': 0, 'leave_encashment': 0,
+                    },
+                    'deductions': {'home_loan_interest': 0, 'nps_self': 0},
+                },
+                'confidence': 0,
+                'metadata': {'elapsed_seconds': round(elapsed, 2)}
+            }), 200
 
     except TimeoutError as e:
         elapsed = time.time() - start_time
