@@ -373,14 +373,9 @@ def deterministic_extract(text, doc_type="form16"):
     t_clean = t.replace(',', '').replace('Rs.', '').replace('INR', '').replace('₹', '')
 
     def find_number_by_labels(labels):
-        for lab in labels:
-            m = re.search(fr'{lab}\s*[:\-]?\s*([\d\.,₹₹ ]{{1,30}})', t, re.I)
-            if m:
-                val = _parse_int_like(m.group(1))
-                if val:
-                    return val, f"label:{lab}", m.group(1)
-        # Search lines containing label — take the LAST 4+ digit number
-        # (rightmost column = Grand Total in YTD multi-column payslips)
+        # Always use line-based search and take LAST 4+ digit number.
+        # "Last" = rightmost column = Grand Total in YTD payslips.
+        # For single-value docs (Form16, monthly payslip) last == only number.
         lines = t.split('\n')
         for i, line in enumerate(lines):
             for lab in labels:
@@ -390,6 +385,7 @@ def deterministic_extract(text, doc_type="form16"):
                         val = _parse_int_like(nums[-1])
                         if val:
                             return val, f"line:{lab}", nums[-1]
+                    # label line has no numbers → check next line
                     if i + 1 < len(lines):
                         next_nums = re.findall(r'\d{4,}', lines[i+1].replace(',', ''))
                         if next_nums:
@@ -429,10 +425,10 @@ def deterministic_extract(text, doc_type="form16"):
         'special_allowance': [r'special allowance', r'special pay'],
         'car_lease_allowance': [r'car lease allowance', r'car allowance', r'car lease'],
         'uniform_allowance': [r'uniform allowance', r'\buniform\b'],
-        'pf_employee': [r'employee pf', r'pf employee', r'provident fund employee', r'pf \(employee\)'],
-        'pf_employer': [r'employer pf', r'pf employer', r'provident fund employer', r'pf \(employer\)'],
-        'tds_paid': [r'tds deducted', r'tds paid', r'tax deducted at source', r'\btds\b'],
-        'professional_tax': [r'professional tax', r'prof tax', r'\bpt\b'],
+        'pf_employee': [r'employee pf', r'epf employee', r'pf employee', r'provident fund employee', r'pf \(employee\)', r'employee contribution.*pf', r'pf contribution'],
+        'pf_employer': [r'employer pf', r'epf employer', r'pf employer', r'provident fund employer', r'pf \(employer\)', r'employer contribution.*pf'],
+        'tds_paid': [r'income tax\b', r'tds deducted', r'tds paid', r'tax deducted at source', r'\btds\b'],
+        'professional_tax': [r'professional tax', r'prof tax', r'\bprof\. tax\b', r'p\.tax'],
         'gratuity': [r'gratuity'],
         'leave_encashment': [r'leave encashment', r'encashment'],
         'section_17_1': [r'section 17\(1\)', r'section 17 1', r'section 17-1'],
