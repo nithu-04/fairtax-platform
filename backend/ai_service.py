@@ -555,15 +555,30 @@ def extract_from_text(text, doc_type="payslip"):
         if not text or len(text.strip()) < 50:
             return {"success": False, "error": "Insufficient text for extraction"}
 
-        # Pick the right prompt
-        if doc_type == "payslip":
-            prompt = PAYSLIP_TEXT_EXTRACTION_PROMPT
-        else:
-            prompt = INVESTMENT_PROMPTS.get(doc_type, EXTRACTION_PROMPT)
+        # ── Deterministic pre-pass ────────────────────────────────────────────
+        # For payslip / form16 try regex first. If it finds the key monetary
+        # fields with high confidence we skip the AI call entirely (~0ms vs ~3s).
+        result = None
+        if doc_type in ("payslip", "form16"):
+            det_result, _ = deterministic_extract(text, doc_type)
+            key_fields = ["gross_salary", "basic_salary", "hra_received", "tds_paid"]
+            found = [f for f in key_fields if det_result.get(f, 0)]
+            if len(found) >= 3:  # at least 3 of 4 key fields found deterministically
+                print(f"[EXTRACT_TEXT][{doc_type}] Deterministic pass found {found} — skipping AI call")
+                result = det_result
+            else:
+                print(f"[EXTRACT_TEXT][{doc_type}] Deterministic found only {found} — calling AI")
 
-        messages = [{"role": "user", "content": f"{prompt}\n\nDOCUMENT TEXT:\n{text}"}]
-        raw = _call_openai(messages)
-        result = _parse_json(raw)
+        if result is None:
+            # Pick the right prompt
+            if doc_type == "payslip":
+                prompt = PAYSLIP_TEXT_EXTRACTION_PROMPT
+            else:
+                prompt = INVESTMENT_PROMPTS.get(doc_type, EXTRACTION_PROMPT)
+
+            messages = [{"role": "user", "content": f"{prompt}\n\nDOCUMENT TEXT:\n{text}"}]
+            raw = _call_openai(messages)
+            result = _parse_json(raw)
 
         if not result:
             # Try regex fallback for investment types
