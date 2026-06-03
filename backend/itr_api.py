@@ -509,9 +509,53 @@ def validate_data():
 
 @itr_bp.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint."""
-    return jsonify({
-        'status': 'healthy',
-        'ocr_available': _get_processor().use_ocr,
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()}), 200
+
+
+@itr_bp.route('/diagnose', methods=['GET'])
+def diagnose():
+    """Ping OpenAI, check env vars, and return a production health report."""
+    import os, requests as _req
+    report = {
         'timestamp': datetime.now().isoformat(),
-    }), 200
+        'openai_api_key_set': bool(os.getenv('OPENAI_API_KEY')),
+        'openai_model': os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+        'openai_ping': None,
+        'processor_init': None,
+        'errors': []
+    }
+
+    # 1 ── Test OpenAI text API
+    try:
+        key = os.getenv('OPENAI_API_KEY', '')
+        r = _req.post(
+            'https://api.openai.com/v1/chat/completions',
+            headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+            json={
+                'model': os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+                'messages': [{'role': 'user', 'content': 'Reply with {"ok":true}'}],
+                'max_tokens': 10,
+                'response_format': {'type': 'json_object'},
+                'temperature': 0.0,
+            },
+            timeout=20,
+        )
+        report['openai_ping'] = f'HTTP {r.status_code}'
+        if r.status_code == 200:
+            report['openai_text_response'] = r.json()['choices'][0]['message']['content']
+        else:
+            report['errors'].append(f'OpenAI returned {r.status_code}: {r.text[:200]}')
+    except Exception as exc:
+        report['openai_ping'] = 'FAILED'
+        report['errors'].append(f'OpenAI ping error: {exc}')
+
+    # 2 ── Test processor lazy-init
+    try:
+        _get_processor()
+        report['processor_init'] = 'OK'
+    except Exception as exc:
+        report['processor_init'] = 'FAILED'
+        report['errors'].append(f'Processor init error: {exc}')
+
+    report['healthy'] = len(report['errors']) == 0
+    return jsonify(report), 200
