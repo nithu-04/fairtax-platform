@@ -2,6 +2,8 @@ import requests
 import json
 import base64
 import re
+import time
+import traceback
 from config import Config
 import tax_engine
 import tax_config
@@ -219,10 +221,14 @@ RULES:
 }
 
 
-def _call_openai(messages, max_tokens=700, json_mode=True):
+_RETRYABLE_HTTP = {429, 500, 502, 503, 529}
+
+
+def _call_openai(messages, max_tokens=700, json_mode=True, max_retries=2):
+    """Call OpenAI text API with exponential-backoff retry for transient errors."""
     headers = {
         "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
     payload = {
         "model": Config.OPENAI_MODEL,
@@ -232,9 +238,37 @@ def _call_openai(messages, max_tokens=700, json_mode=True):
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    r = requests.post(Config.OPENAI_URL, headers=headers, json=payload, timeout=35)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            r = requests.post(
+                Config.OPENAI_URL, headers=headers, json=payload, timeout=60
+            )
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+
+        except requests.exceptions.Timeout as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                wait = 2 ** attempt
+                print(f"[OPENAI] Timeout (attempt {attempt+1}). Retrying in {wait}s…")
+                time.sleep(wait)
+
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            if status in _RETRYABLE_HTTP and attempt < max_retries:
+                wait = 2 ** attempt
+                print(f"[OPENAI] HTTP {status} (attempt {attempt+1}). Retrying in {wait}s…")
+                time.sleep(wait)
+                last_exc = exc
+            else:
+                raise  # 400/401/404 → permanent, propagate immediately
+
+        except Exception:
+            raise
+
+    raise last_exc or RuntimeError("OpenAI call failed after retries")
 
 
 def _parse_json(text):

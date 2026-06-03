@@ -412,8 +412,12 @@ def extract_pass1_vision(image_bytes_list, doc_type):
                 if "fields" not in result:
                     result = {"fields": result}
                 fields = result.get("fields", {}) or {}
+                # Keep any field whose value is genuinely present (not null/None).
+                # We intentionally allow 0 for numeric fields — 0 is a valid value
+                # (e.g. PT = 0 for some months) and was incorrectly filtered before.
+                # Only skip truly absent fields (None or missing key).
                 non_null = {k: v for k, v in fields.items()
-                            if isinstance(v, dict) and v.get("value") not in (None, "", 0, "0")}
+                            if isinstance(v, dict) and v.get("value") is not None}
                 if not non_null:
                     return page_num, None, None
                 result["_page"] = page_num

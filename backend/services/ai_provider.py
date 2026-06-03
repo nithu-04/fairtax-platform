@@ -1,7 +1,9 @@
 import os
 import json
 import base64
-from openai import OpenAI
+import time
+import threading
+from openai import OpenAI, RateLimitError, APIStatusError, APIConnectionError, APITimeoutError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,108 +12,123 @@ AI_PROVIDER = os.getenv("AI_PROVIDER", "openai")
 AI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 _client = None
+_client_lock = threading.Lock()  # thread-safe init
+
+# Transient HTTP status codes that warrant a retry
+_RETRYABLE_STATUS = {429, 500, 502, 503, 529}
+
+# Conservative concurrency limit — avoid cascading rate-limit errors when
+# multiple pages are processed in parallel.
+_API_SEMAPHORE = threading.Semaphore(3)
+
 
 def _get_client():
-    """Initialize OpenAI API client."""
+    """Thread-safe OpenAI SDK client initialisation.
+
+    Deliberately does NOT cache None — every call retries init so a transient
+    startup failure doesn't permanently break Vision for the lifetime of the
+    process.
+    """
     global _client
-    if _client is not None:
-        print(f"[AI_PROVIDER] Returning cached client")
-        return _client
-    api_key = os.getenv("OPENAI_API_KEY")
-    print(f"[AI_PROVIDER] _get_client() called. API key: {'SET' if api_key else 'NOT SET'}")
-    try:
-        if api_key:
-            print(f"[AI_PROVIDER] Initializing OpenAI with API key...")
-            _client = OpenAI(api_key=api_key)
-        else:
-            print(f"[AI_PROVIDER] Initializing OpenAI from environment...")
-            _client = OpenAI()  # Uses OPENAI_API_KEY from env
-        print(f"[AI_PROVIDER] OpenAI client initialized successfully")
-    except Exception as e:
-        print(f"[AI_PROVIDER] Could not initialize OpenAI client: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        _client = None
-    return _client
-
-def generate_ai_response(prompt):
-    """Call text/reasoning model with text prompt using OpenAI."""
-    try:
-        if AI_PROVIDER == "openai":
-            client = _get_client()
-            if not client:
-                raise ValueError("OpenAI client not initialized")
-
-            response = client.chat.completions.create(
-                model=AI_MODEL,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.0,  # FIXED: Changed from 0.7 to 0.0 for deterministic extraction
-                max_tokens=2000
+    with _client_lock:
+        if _client is not None:
+            return _client
+        api_key = os.getenv("OPENAI_API_KEY")
+        print(f"[AI_PROVIDER] Initialising OpenAI client. API key: {'SET' if api_key else 'NOT SET'}")
+        try:
+            _client = OpenAI(
+                api_key=api_key,
+                timeout=90.0,          # hard cap per request
+                max_retries=0,         # we handle retries ourselves
             )
-
-            return response.choices[0].message.content
-
-        raise ValueError(f"Unsupported AI provider: {AI_PROVIDER}")
-
-    except Exception as e:
-        print(f"[AI_PROVIDER] Text generation error: {str(e)}")
-        raise
+            print("[AI_PROVIDER] OpenAI client ready")
+        except Exception as exc:
+            print(f"[AI_PROVIDER] Client init failed: {exc}")
+            _client = None
+        return _client
 
 
-def call_vision_model(image_bytes, prompt):
-    """Call OpenAI Vision model (GPT-4o) with image bytes + text prompt."""
-    try:
-        if AI_PROVIDER != "openai":
-            raise ValueError(f"Unsupported AI provider for Vision: {AI_PROVIDER}")
+def _is_retryable(exc: Exception) -> bool:
+    """Return True for transient errors that should be retried."""
+    if isinstance(exc, RateLimitError):
+        return True
+    if isinstance(exc, APIStatusError) and exc.status_code in _RETRYABLE_STATUS:
+        return True
+    if isinstance(exc, (APIConnectionError, APITimeoutError)):
+        return True
+    msg = str(exc).lower()
+    return any(k in msg for k in ("timeout", "rate limit", "overloaded", "503", "502", "529"))
 
+
+def call_vision_model(image_bytes: bytes, prompt: str, max_retries: int = 2) -> str:
+    """Call GPT-4o-mini Vision with retry + exponential back-off.
+
+    Uses a semaphore to bound concurrent Vision calls and avoid rate limits
+    when multiple document pages are processed in parallel.
+    """
+    if AI_PROVIDER != "openai":
+        raise ValueError(f"Unsupported AI provider for Vision: {AI_PROVIDER}")
+
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_b64}", "detail": "high"},
+                },
+            ],
+        }
+    ]
+
+    last_exc = None
+    for attempt in range(max_retries + 1):
         client = _get_client()
         if not client:
-            raise ValueError("OpenAI client not initialized")
+            raise RuntimeError("OpenAI client could not be initialised — check OPENAI_API_KEY")
 
-        # Encode image to base64
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        try:
+            with _API_SEMAPHORE:
+                response = client.chat.completions.create(
+                    model=AI_MODEL,
+                    messages=messages,
+                    max_tokens=1200,
+                    temperature=0.0,
+                )
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("Empty response from Vision model")
+            return content
 
-        # Call OpenAI Vision API with configured model
-        response = client.chat.completions.create(
-            model=AI_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{image_base64}",
-                                "detail": "high"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=1200,
-            temperature=0.0
-        )
+        except Exception as exc:
+            last_exc = exc
+            if _is_retryable(exc) and attempt < max_retries:
+                wait = 2 ** attempt          # 1s, 2s
+                print(f"[AI_PROVIDER] Vision transient error (attempt {attempt+1}): {exc}. Retrying in {wait}s…")
+                time.sleep(wait)
+                continue
+            print(f"[AI_PROVIDER] Vision failed (attempt {attempt+1}): {exc}")
+            break  # non-retryable or out of retries
 
-        result = response.choices[0].message.content
-        if not result:
-            raise ValueError("No response from Vision model")
-
-        return result
-
-    except Exception as e:
-        print(f"[AI_PROVIDER] Vision extraction failed: {str(e)}")
-        raise
+    raise last_exc or RuntimeError("Vision extraction failed for unknown reason")
 
 
-def call_reasoning_model(text_prompt, json_data):
-    """Call text model with structured JSON data for tax reasoning using OpenAI."""
-    try:
-        combined_prompt = f"{text_prompt}\n\nStructured Data:\n{json.dumps(json_data, indent=2)}"
-        return generate_ai_response(combined_prompt)
+def generate_ai_response(prompt: str) -> str:
+    """Text-only AI call (used for WhatsApp replies and tax calculation)."""
+    client = _get_client()
+    if not client:
+        raise RuntimeError("OpenAI client not initialised")
+    response = client.chat.completions.create(
+        model=AI_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.0,
+        max_tokens=2000,
+    )
+    return response.choices[0].message.content
 
-    except Exception as e:
-        print(f"[AI_PROVIDER] Reasoning call failed: {str(e)}")
-        raise
+
+def call_reasoning_model(text_prompt: str, json_data: dict) -> str:
+    combined = f"{text_prompt}\n\nStructured Data:\n{json.dumps(json_data, indent=2)}"
+    return generate_ai_response(combined)
