@@ -10,6 +10,8 @@ Main entry point for the Vision-based extraction pipeline:
 """
 
 import io
+import hashlib
+import time
 import traceback
 from services import file_handler, vision_extractor, normalization_service, validation_service
 import logging
@@ -17,10 +19,37 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Minimum average characters per page to consider a PDF "digital" (not scanned)
-_TEXT_FAST_PATH_MIN_CHARS = 150
+_TEXT_FAST_PATH_MIN_CHARS = 80
 
 # Doc types where text fast-path is safe (well-structured tabular text in digital PDFs)
 _TEXT_FAST_PATH_DOC_TYPES = {"payslip", "form16", "homeloan", "nps", "school", "insurance", "donation"}
+
+# ── In-memory extraction cache ───────────────────────────────────────────────
+# Key: md5(file_bytes) + doc_type  Value: (result_dict, timestamp)
+# Avoids re-calling the AI when the same file is uploaded again (e.g. user
+# clicks Back and re-uploads, or refreshes the page).
+_CACHE: dict = {}
+_CACHE_TTL = 3600  # seconds (1 hour)
+
+def _cache_key(file_bytes: bytes, doc_type: str) -> str:
+    return hashlib.md5(file_bytes).hexdigest() + "_" + doc_type
+
+def _cache_get(file_bytes: bytes, doc_type: str):
+    key = _cache_key(file_bytes, doc_type)
+    entry = _CACHE.get(key)
+    if entry and (time.time() - entry[1]) < _CACHE_TTL:
+        print(f"[CACHE] HIT for {doc_type} (md5={key[:8]}…)")
+        return entry[0]
+    return None
+
+def _cache_set(file_bytes: bytes, doc_type: str, result: dict):
+    key = _cache_key(file_bytes, doc_type)
+    _CACHE[key] = (result, time.time())
+    # Evict old entries to prevent unbounded growth
+    if len(_CACHE) > 200:
+        oldest = sorted(_CACHE, key=lambda k: _CACHE[k][1])[:50]
+        for k in oldest:
+            del _CACHE[k]
 
 
 def _try_text_extraction(file_bytes, doc_type):
@@ -102,6 +131,11 @@ def process_documents(file_bytes, mime_type, doc_type):
     - User uploads low-quality document → Error + feedback to user
     """
     try:
+        # ─────── CACHE CHECK ─────────────────────────────
+        cached = _cache_get(file_bytes, doc_type)
+        if cached:
+            return cached
+
         # ─────── FAST PATH: Digital PDF via pdfplumber ───
         # For digital (non-scanned) PDFs, skip image conversion + Vision API entirely.
         # This is ~3-5× faster and more accurate for clean payslips / Form 16 PDFs.
@@ -109,6 +143,7 @@ def process_documents(file_bytes, mime_type, doc_type):
             fast_result = _try_text_extraction(file_bytes, doc_type)
             if fast_result:
                 print(f"[DOCUMENT_PROCESSOR] Fast-path succeeded. Returning text-extracted result.")
+                _cache_set(file_bytes, doc_type, fast_result)
                 return fast_result
 
         # ─────── STEP 1: Convert File to Images ──────────
@@ -206,7 +241,7 @@ def process_documents(file_bytes, mime_type, doc_type):
         # ─────── STEP 5: Return Success ────────────────
         print(f"[DOCUMENT_PROCESSOR] Pipeline complete. Document processing successful.")
 
-        return {
+        final_result = {
             "success": True,
             "data": normalized_data,
             "confidence": round(normalized_result.get("extraction_confidence", 0), 2),
@@ -223,6 +258,8 @@ def process_documents(file_bytes, mime_type, doc_type):
             },
             "error": None
         }
+        _cache_set(file_bytes, doc_type, final_result)
+        return final_result
 
     except Exception as e:
         # Unexpected error

@@ -2,6 +2,8 @@ import requests
 import json
 import base64
 import re
+import time
+import traceback
 from config import Config
 import tax_engine
 import tax_config
@@ -39,59 +41,79 @@ CRITICAL RULES:
 • Numbers: plain integers (no commas, no currency symbols)."""
 
 # Dedicated prompt for payslip text extraction (fast-path via pdfplumber)
-PAYSLIP_TEXT_EXTRACTION_PROMPT = """You are an expert Indian payslip extractor. Extract salary data from the payslip text below.
-Return ONLY valid JSON with these exact keys (use 0 if not found):
+PAYSLIP_TEXT_EXTRACTION_PROMPT = """You are an Indian payroll expert extracting salary figures for ITR tax filing.
+
+━━━ STEP 1 — DETECT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+YTD / ANNUAL PAYSLIP (most common in India):
+  Signs: Multiple month columns visible (Apr 2024, May 2024 … or Month-1, Month-2 …)
+         AND a "Grand Total" / "Annual Total" / "Total" column on the FAR RIGHT.
+  Action: Use ONLY the Grand Total / Annual Total column. Set is_ytd = true.
+          Do NOT read any individual month column.
+
+MONTHLY PAYSLIP:
+  Signs: Shows a single month with one Amount column.
+  Action: Extract that month's figures. Set is_ytd = false.
+
+━━━ STEP 2 — FIELD EXTRACTION RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Read each row label carefully. For YTD payslips use ONLY the Grand Total column value.
+
+gross_salary     → Row: "TOTAL EARNING" | "GROSS SALARY" | "GROSS PAY" | "TOTAL SALARY" | "CTC"
+basic_salary     → Row: "BASIC" | "BASIC SALARY" | "BASIC PAY"
+hra_received     → SUM of EVERY row whose label contains the word "HRA":
+                   Examples: HRA, NON-FBP HRA, METRO HRA, BASIC HRA, SPECIAL HRA, FBP HRA
+                   Add ALL of them together. Show the sum in hra_received.
+tds_paid         → Row: "INCOME TAX" | "TDS" | "TAX DEDUCTED AT SOURCE" | "TAX DEDUCTION"
+                   ⚠ NEVER use "TOTAL DEDUCTION" (that includes PF + PT + TDS together)
+pf_employee      → Row: "PF" | "EMPLOYEE PF" | "EPF" | "EMPLOYEE EPF" | "PF CONTRIBUTION"
+                   (the employee's own contribution, not employer's)
+pf_employer      → Row: "EMPLOYER PF" | "EMPLOYER EPF" | "EMPLOYER CONTRIBUTION" (if present)
+professional_tax → Row: "PROF TAX" | "PROFESSIONAL TAX" | "PT" | "P.TAX" | "P TAX"
+lta              → Row: "LTA" | "LEAVE TRAVEL ALLOWANCE" | "LEAVE TRAVEL"
+special_allowance→ Row: "SPECIAL ALLOWANCE" | "SPECIAL PAY" | "NON-FBP OTHER ALL" | "OTHER ALLOWANCE"
+car_lease_allowance → Row: "CAR LEASE" | "CAR ALLOWANCE" | "VEHICLE ALLOWANCE" | "CAR LEASE ALLOWANCE"
+uniform_allowance → Row: "UNIFORM ALLOWANCE" | "DRESS ALLOWANCE"
+gratuity         → Row: "GRATUITY"
+leave_encashment → Row: "LEAVE ENCASHMENT" | "ENCASHMENT"
+
+━━━ STEP 3 — RETURN JSON ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Return ONLY valid JSON. All monetary values must be whole integers (no decimals, no commas):
 {
-  "name": "",
-  "employer_name": "",
-  "pan": "",
   "gross_salary": 0,
   "basic_salary": 0,
   "hra_received": 0,
+  "tds_paid": 0,
+  "pf_employee": 0,
+  "pf_employer": 0,
+  "professional_tax": 0,
   "lta": 0,
   "special_allowance": 0,
   "car_lease_allowance": 0,
   "uniform_allowance": 0,
-  "pf_employee": 0,
-  "pf_employer": 0,
-  "tds_paid": 0,
-  "professional_tax": 0,
   "gratuity": 0,
   "leave_encashment": 0,
   "is_ytd": false,
   "assumptions": []
 }
 
-━━━ STEP 1: DETECT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FORMAT A — MONTHLY PAYSLIP: single month, one "Amount" column.
-  → Extract monthly figures. Set is_ytd=false. All values are monthly; multiply by 12 for annual.
-
-FORMAT B — YTD/ANNUAL PAYSLIP: multiple month columns OR "Grand Total"/"YTD"/"Cumulative" column.
-  → Extract ONLY from "Grand Total" / "YTD" / "Annual Total" / rightmost totals column.
-  → DO NOT use individual month columns. Set is_ytd=true. Values are already annual (do NOT multiply by 12).
-
-━━━ STEP 2: HRA — SUM ALL VARIANTS ━━━━━━━━━━━━━━━━━━━━━━━━━━
-hra_received = SUM of ALL rows containing "HRA" in their label:
-  HRA + NON-FBP HRA + BASIC HRA + METRO HRA + any other "...HRA..." row.
-Add them all. Record each component in assumptions[].
-
-━━━ STEP 3: TDS — INCOME TAX ROW ONLY ━━━━━━━━━━━━━━━━━━━━━━━
-tds_paid = value from "INCOME TAX" or "TAX DEDUCTED AT SOURCE" or "TDS" row ONLY.
-⚠ NEVER use "TOTAL DEDUCTION" or "TOTAL DEDUCTIONS" — that is the sum of all deductions.
-
-━━━ STEP 4: PF & PROFESSIONAL TAX ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-pf_employee: "EMPLOYEE PF" / "PF EMPLOYEE" / "EPF EMPLOYEE" / "PF CONTRIBUTION"
-pf_employer: "EMPLOYER PF" / "PF EMPLOYER" / "EPF EMPLOYER"
-professional_tax: "PROFESSIONAL TAX" / "PROF TAX" / "PT"
-
-CRITICAL RULES:
-• Return plain integers only (no commas, no ₹ symbols).
-• Never invent values. Use 0 only if genuinely not found.
-• Record every assumption and conversion in the assumptions array."""
+CRITICAL: Use 0 for missing fields. Never invent. Never use monthly column values for YTD payslips."""
 
 INVESTMENT_PROMPTS = {
-    "homeloan": """You are a tax document extractor. Extract from Home Loan Interest Certificate / Statement.
-Return ONLY valid JSON (use 0 if not found):
+    "homeloan": """You are an Indian tax expert extracting home loan data for ITR filing.
+
+Extract the following from this Home Loan Interest Certificate / Repayment Statement / Bank Statement:
+
+home_loan_interest  → Total interest paid in this financial year (for Section 24 deduction)
+                      Look for: "Interest paid", "Interest component", "Total interest", "Interest for the year"
+home_loan_principal → Total principal repaid in this financial year (for Section 80C deduction)
+                      Look for: "Principal paid", "Principal component", "Principal repaid", "Repayment"
+loan_account_no     → Loan account / reference number
+bank_name           → Bank or NBFC name
+loan_outstanding    → Outstanding loan balance (remaining principal)
+
+Return ONLY valid JSON:
 {
   "home_loan_interest": 0,
   "home_loan_principal": 0,
@@ -100,56 +122,91 @@ Return ONLY valid JSON (use 0 if not found):
   "loan_outstanding": 0
 }
 
-CRITICAL RULES:
-• Extract ANNUAL figures only (convert monthly by ×12).
-• Never invent values.
-• If interest and principal both appear, extract both (don't guess which applies).
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• Use the ANNUAL (full financial year) figures only
+• All amounts as plain integers in INR (remove decimals and commas)
+• Use 0 for amounts not found; use "" for text fields not found
+• Never invent or estimate values""",
 
-    "school": """You are a tax document extractor. Extract from School / Tuition Fee receipt.
-Return ONLY valid JSON (use 0 if not found):
+    "school": """You are an Indian tax expert extracting school fee data for ITR filing.
+
+Extract the following from this School Fee Receipt / Tuition Fee Certificate:
+
+school_fees → Total annual tuition/school fees paid (for Section 80C deduction)
+              Look for: "Tuition fees", "School fees", "Annual fees", "Total fees paid"
+school_name → Full name of the school / institution
+
+Return ONLY valid JSON:
 {
   "school_fees": 0,
   "school_name": ""
 }
 
-CRITICAL RULES:
-• Extract ANNUAL total fees (if monthly is given, multiply by 12 and add "×12" to name if ambiguous).
-• Never invent values.
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• Extract ANNUAL total fees (if monthly shown, multiply by 12)
+• school_fees as plain integer in INR
+• Never invent values""",
 
-    "nps": """You are a tax document extractor. Extract from NPS (National Pension System) Statement.
-Return ONLY valid JSON (use 0 if not found):
+    "nps": """You are an Indian tax expert extracting NPS data for ITR filing.
+
+Extract the following from this NPS (National Pension System) Account Statement:
+
+nps_pran     → PRAN number (Permanent Retirement Account Number) — 12-digit number
+nps_self     → Total employee / subscriber contribution for the financial year (for 80CCD(1B))
+               Look for: "Subscriber contribution", "Employee contribution", "Own contribution", "Tier I contribution (self)"
+nps_employer → Total employer contribution for the financial year (for 80CCD(2))
+               Look for: "Employer contribution", "Government contribution", "Corporate contribution"
+
+Return ONLY valid JSON:
 {
   "nps_self": 0,
   "nps_employer": 0,
   "nps_pran": ""
 }
 
-CRITICAL RULES:
-• Extract ANNUAL contribution amounts.
-• Distinguish self vs employer contributions clearly.
-• If contributions vary by month, extract only the most recent full-year total or annotate ambiguity.
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• ANNUAL contribution totals for the financial year
+• All amounts as plain integers in INR
+• Use 0 for amounts not found; use "" for PRAN not found
+• Never invent values""",
 
-    "insurance": """You are a tax document extractor. Extract from Insurance document (LIC / ULIP / Health Insurance).
-Return ONLY valid JSON (use 0 if not found):
+    "insurance": """You are an Indian tax expert extracting insurance data for ITR filing.
+
+Extract the following from this Insurance Policy / Premium Receipt:
+
+policy_no      → Policy number or reference number
+insurer_name   → Insurance company name (LIC, HDFC Life, ICICI Prudential, Max Life, Star Health, etc.)
+premium_amount → Annual premium paid (for 80C if life/ULIP; 80D if health)
+                 Look for: "Premium paid", "Annual premium", "Premium amount", "Amount paid"
+sum_assured    → Sum assured / coverage amount / insured amount
+coverage_type  → "life" for life insurance / term plan / ULIP / endowment (→ 80C)
+                 "health" for mediclaim / health insurance / floater (→ 80D)
+
+Return ONLY valid JSON:
 {
   "policy_no": "",
   "insurer_name": "",
   "premium_amount": 0,
   "sum_assured": 0,
-  "coverage_type": "life or health"
+  "coverage_type": "life"
 }
 
-CRITICAL RULES:
-• Extract ANNUAL premium amount (convert monthly by ×12 if needed).
-• Identify coverage_type as "life" (LIC, ULIP → Section 80C), "health" (mediclaim → Section 80D), or "both".
-• Never invent values.
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• ANNUAL premium (if quarterly/monthly shown, compute annual total)
+• coverage_type must be exactly "life" or "health"
+• All amounts as plain integers in INR
+• Never invent values""",
 
-    "donation": """You are a tax document extractor. Extract from Donation receipt / 80G certificate.
-Return ONLY valid JSON (use 0 if not found):
+    "donation": """You are an Indian tax expert extracting donation data for ITR filing.
+
+Extract the following from this Donation Receipt / 80G Certificate:
+
+donation_amount   → Amount donated in INR
+organization_name → Name of the trust / NGO / organization that received the donation
+donee_pan         → PAN number of the organization (required for 80G deduction) — format: XXXXX9999X
+receipt_number    → Receipt / certificate number
+
+Return ONLY valid JSON:
 {
   "donation_amount": 0,
   "organization_name": "",
@@ -157,28 +214,61 @@ Return ONLY valid JSON (use 0 if not found):
   "receipt_number": ""
 }
 
-CRITICAL RULES:
-• Extract only 80G-eligible donations.
-• Verify donee PAN is present (Section 80G requires valid PAN).
-• Never invent values or PAN.
-• Numbers: plain integers (no commas, no currency symbols).""",
+RULES:
+• Extract only 80G-eligible donations (must have organization PAN)
+• All amounts as plain integers in INR
+• Never invent values or PAN numbers""",
 }
 
 
-def _call_openai(messages, max_tokens=2000):
+_RETRYABLE_HTTP = {429, 500, 502, 503, 529}
+
+
+def _call_openai(messages, max_tokens=700, json_mode=True, max_retries=2):
+    """Call OpenAI text API with exponential-backoff retry for transient errors."""
     headers = {
         "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
     payload = {
         "model": Config.OPENAI_MODEL,
         "messages": messages,
-        "temperature": 0.0,  # FIXED: Changed from 0.1 to 0.0 for deterministic extraction
+        "temperature": 0.0,
         "max_tokens": max_tokens,
     }
-    r = requests.post(Config.OPENAI_URL, headers=headers, json=payload, timeout=120)
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            r = requests.post(
+                Config.OPENAI_URL, headers=headers, json=payload, timeout=60
+            )
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+
+        except requests.exceptions.Timeout as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                wait = 2 ** attempt
+                print(f"[OPENAI] Timeout (attempt {attempt+1}). Retrying in {wait}s…")
+                time.sleep(wait)
+
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            if status in _RETRYABLE_HTTP and attempt < max_retries:
+                wait = 2 ** attempt
+                print(f"[OPENAI] HTTP {status} (attempt {attempt+1}). Retrying in {wait}s…")
+                time.sleep(wait)
+                last_exc = exc
+            else:
+                raise  # 400/401/404 → permanent, propagate immediately
+
+        except Exception:
+            raise
+
+    raise last_exc or RuntimeError("OpenAI call failed after retries")
 
 
 def _parse_json(text):
@@ -371,31 +461,25 @@ def deterministic_extract(text, doc_type="form16"):
     t_clean = t.replace(',', '').replace('Rs.', '').replace('INR', '').replace('₹', '')
 
     def find_number_by_labels(labels):
-        for lab in labels:
-            # try label: number
-            m = re.search(fr'{lab}\s*[:\-]?\s*([\d\.,₹₹ ]{{1,30}})', t, re.I)
-            if m:
-                val = _parse_int_like(m.group(1))
-                if val:
-                    return val, f"label:{lab}", m.group(1)
-        # fallback: search lines containing label and pick first number in line
+        # Always use line-based search and take LAST 4+ digit number.
+        # "Last" = rightmost column = Grand Total in YTD payslips.
+        # For single-value docs (Form16, monthly payslip) last == only number.
         lines = t.split('\n')
         for i, line in enumerate(lines):
             for lab in labels:
                 if re.search(lab, line, re.I):
-                    m2 = re.search(r'([\d\.,₹₹ ]{3,30})', line)
-                    if m2:
-                        val = _parse_int_like(m2.group(1))
+                    nums = re.findall(r'\d{4,}', line.replace(',', ''))
+                    if nums:
+                        val = _parse_int_like(nums[-1])
                         if val:
-                            return val, f"line:{lab}", m2.group(1)
-                    # try next line
+                            return val, f"line:{lab}", nums[-1]
+                    # label line has no numbers → check next line
                     if i + 1 < len(lines):
-                        next_line = lines[i+1]
-                        m3 = re.search(r'([\d\.,₹₹ ]{3,30})', next_line)
-                        if m3:
-                            val = _parse_int_like(m3.group(1))
+                        next_nums = re.findall(r'\d{4,}', lines[i+1].replace(',', ''))
+                        if next_nums:
+                            val = _parse_int_like(next_nums[-1])
                             if val:
-                                return val, f"nextline:{lab}", m3.group(1)
+                                return val, f"nextline:{lab}", next_nums[-1]
         return None, None, None
 
     def find_text_label(labels):
@@ -422,17 +506,17 @@ def deterministic_extract(text, doc_type="form16"):
 
     # field labels map
     labels_map = {
-        'gross_salary': [r'gross salary', r'gross total', r'total gross', r'total earnings', r'gross pay', r'gross income', r'total remuneration'],
+        'gross_salary': [r'gross salary', r'gross total', r'total gross', r'total earnings', r'total earning\b', r'gross pay', r'gross income', r'total remuneration', r'ctc'],
         'basic_salary': [r'basic salary', r'\bbasic\b', r'basic pay'],
         'hra_received': [r'hra received', r'house rent allowance', r'\bhra\b'],
         'lta': [r'leave travel allowance', r'\blta\b', r'leave travel'],
         'special_allowance': [r'special allowance', r'special pay'],
         'car_lease_allowance': [r'car lease allowance', r'car allowance', r'car lease'],
         'uniform_allowance': [r'uniform allowance', r'\buniform\b'],
-        'pf_employee': [r'employee pf', r'pf employee', r'provident fund employee', r'pf \(employee\)'],
-        'pf_employer': [r'employer pf', r'pf employer', r'provident fund employer', r'pf \(employer\)'],
-        'tds_paid': [r'tds deducted', r'tds paid', r'tax deducted at source', r'\btds\b'],
-        'professional_tax': [r'professional tax', r'prof tax', r'\bpt\b'],
+        'pf_employee': [r'employee pf', r'epf employee', r'pf employee', r'provident fund employee', r'pf \(employee\)', r'employee contribution.*pf', r'pf contribution'],
+        'pf_employer': [r'employer pf', r'epf employer', r'pf employer', r'provident fund employer', r'pf \(employer\)', r'employer contribution.*pf'],
+        'tds_paid': [r'income tax\b', r'tds deducted', r'tds paid', r'tax deducted at source', r'\btds\b'],
+        'professional_tax': [r'professional tax', r'prof tax', r'\bprof\. tax\b', r'p\.tax'],
         'gratuity': [r'gratuity'],
         'leave_encashment': [r'leave encashment', r'encashment'],
         'section_17_1': [r'section 17\(1\)', r'section 17 1', r'section 17-1'],
@@ -553,15 +637,31 @@ def extract_from_text(text, doc_type="payslip"):
         if not text or len(text.strip()) < 50:
             return {"success": False, "error": "Insufficient text for extraction"}
 
-        # Pick the right prompt
-        if doc_type == "payslip":
-            prompt = PAYSLIP_TEXT_EXTRACTION_PROMPT
-        else:
-            prompt = INVESTMENT_PROMPTS.get(doc_type, EXTRACTION_PROMPT)
+        # ── Deterministic pre-pass ────────────────────────────────────────────
+        # Deterministic regex pre-pass: only for form16 (clean single-value structure).
+        # Payslips — especially YTD multi-column formats — are unreliable with regex,
+        # so we always use the LLM for payslips to guarantee accuracy.
+        result = None
+        if doc_type == "form16":
+            det_result, _ = deterministic_extract(text, doc_type)
+            key_fields = ["gross_salary", "basic_salary", "hra_received", "tds_paid"]
+            found = [f for f in key_fields if det_result.get(f, 0)]
+            if len(found) >= 3:
+                print(f"[EXTRACT_TEXT][form16] Deterministic pass found {found} — skipping AI call")
+                result = det_result
+            else:
+                print(f"[EXTRACT_TEXT][form16] Deterministic found only {found} — calling AI")
 
-        messages = [{"role": "user", "content": f"{prompt}\n\nDOCUMENT TEXT:\n{text}"}]
-        raw = _call_openai(messages)
-        result = _parse_json(raw)
+        if result is None:
+            if doc_type == "payslip":
+                prompt = PAYSLIP_TEXT_EXTRACTION_PROMPT
+            else:
+                prompt = INVESTMENT_PROMPTS.get(doc_type, EXTRACTION_PROMPT)
+
+            messages = [{"role": "user", "content": f"{prompt}\n\nDOCUMENT TEXT:\n{text}"}]
+            tokens = 1200 if doc_type == "payslip" else (1000 if doc_type == "form16" else 700)
+            raw = _call_openai(messages, max_tokens=tokens)
+            result = _parse_json(raw)
 
         if not result:
             # Try regex fallback for investment types
@@ -1237,7 +1337,7 @@ def generate_whatsapp_reply(user_text, phone=None, history=None, max_tokens=800)
             messages.extend(history[-6:])
         messages.append({"role": "user", "content": user_text})
 
-        raw = _call_openai(messages, max_tokens=max_tokens)
+        raw = _call_openai(messages, max_tokens=max_tokens, json_mode=False)
         reply = raw.strip() if isinstance(raw, str) else str(raw)
 
         # Truncate overly long replies for WhatsApp

@@ -4,7 +4,6 @@ Integrates with the ITR document processor.
 """
 
 from flask import Blueprint, request, jsonify
-from itr_extractor import ITRDocumentProcessor
 import os
 from datetime import datetime
 import storage_service
@@ -13,8 +12,28 @@ from werkzeug.utils import secure_filename
 
 itr_bp = Blueprint('itr', __name__, url_prefix='/api/itr')
 
-# Initialize the processor
-processor = ITRDocumentProcessor(use_ocr=True)
+@itr_bp.after_request
+def _cors(response):
+    response.headers.setdefault('Access-Control-Allow-Origin', '*')
+    response.headers.setdefault('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+    response.headers.setdefault('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    return response
+
+@itr_bp.route('/extract', methods=['OPTIONS'])
+@itr_bp.route('/test', methods=['OPTIONS'])
+@itr_bp.route('/health', methods=['OPTIONS'])
+def _options():
+    return '', 200
+
+# Lazy-initialize processor to prevent module-level failures breaking registration
+_processor = None
+
+def _get_processor():
+    global _processor
+    if _processor is None:
+        from itr_extractor import ITRDocumentProcessor
+        _processor = ITRDocumentProcessor(use_ocr=True)
+    return _processor
 
 # DEBUG: Test endpoint to verify blueprint is working
 @itr_bp.route('/test', methods=['GET'])
@@ -135,7 +154,7 @@ def extract_itr_data():
 
                 # Process document with specified doc_type
                 file_start = time.time()
-                result = processor.process_file(file_bytes, filename, doc_type=doc_type)
+                result = _get_processor().process_file(file_bytes, filename, doc_type=doc_type)
                 file_elapsed = time.time() - file_start
                 print(f"[ITR_EXTRACT] {filename}: {file_elapsed:.2f}s, success={result.get('success')}")
 
@@ -161,7 +180,7 @@ def extract_itr_data():
                         if test_type == doc_type:
                             continue
                         try:
-                            test_result = processor.process_file(file_bytes, filename, doc_type=test_type)
+                            test_result = _get_processor().process_file(file_bytes, filename, doc_type=test_type)
                             test_confidence = test_result.get("confidence", 0)
 
                             print(f"[ITR_EXTRACT] {filename} as {test_type}: confidence={test_confidence}")
@@ -321,30 +340,29 @@ def extract_itr_data():
         elapsed = time.time() - start_time
         if result['success']:
             logger.info(f"[ITR_EXTRACT] Success in {elapsed:.2f}s")
-            response = jsonify(result)
-            logger.info(f"[ITR_EXTRACT] Returning 200 response")
-            return response, 200
+            return jsonify(result), 200
         else:
-            logger.error(f"[ITR_EXTRACT] Failed after {elapsed:.2f}s")
-            logger.error(f"[ITR_EXTRACT] Result keys: {result.keys()}")
-            logger.error(f"[ITR_EXTRACT] Error message: {result.get('error', 'Unknown error')}")
-
-            response_dict = {
+            # Extraction failed — return 200 (no CORS issues) but success:false
+            # so the frontend shows "fill manually" instead of "Extracted & Saved"
+            logger.warning(f"[ITR_EXTRACT] Extraction failed after {elapsed:.2f}s: {result.get('error', 'unknown')}")
+            return jsonify({
                 'success': False,
-                'error': result.get('error', 'Extraction failed - no valid data extracted'),
-                'data': result.get('data', {}),
-                'metadata': {**result.get('metadata', {}), 'elapsed_seconds': round(elapsed, 2)}
-            }
-
-            logger.error(f"[ITR_EXTRACT] Building 400 response")
-            try:
-                response = jsonify(response_dict)
-                logger.error(f"[ITR_EXTRACT] Response created successfully, returning 400")
-                return response, 400
-            except Exception as e:
-                logger.error(f"[ITR_EXTRACT] ERROR creating response: {str(e)}", exc_info=True)
-                # Fallback minimal response
-                return jsonify({'success': False, 'error': 'Response encoding error'}), 400
+                'extraction_failed': True,
+                'error': result.get('error', 'Could not extract data — please fill in manually.'),
+                'data': {
+                    'personal': {'pan': '', 'name': ''},
+                    'income': {
+                        'gross_salary': 0, 'basic_salary': 0, 'hra_received': 0,
+                        'tds_paid': 0, 'pf_employee': 0, 'pf_employer': 0,
+                        'professional_tax': 0, 'lta': 0, 'special_allowance': 0,
+                        'car_lease_allowance': 0, 'uniform_allowance': 0,
+                        'gratuity': 0, 'leave_encashment': 0,
+                    },
+                    'deductions': {'home_loan_interest': 0, 'nps_self': 0},
+                },
+                'confidence': 0,
+                'metadata': {'elapsed_seconds': round(elapsed, 2)}
+            }), 200
 
     except TimeoutError as e:
         elapsed = time.time() - start_time
@@ -411,7 +429,7 @@ def extract_batch():
         for file in files:
             try:
                 file_bytes = file.read()
-                result = processor.process_file(file_bytes, file.filename)
+                result = _get_processor().process_file(file_bytes, file.filename)
                 results.append({
                     'filename': file.filename,
                     'success': result['success'],
@@ -472,7 +490,7 @@ def validate_data():
                 'errors': {},
             }), 400
 
-        errors = processor.validator.validate(data)
+        errors = _get_processor().validator.validate(data)
         is_valid = len(errors) == 0
 
         return jsonify({
@@ -491,9 +509,53 @@ def validate_data():
 
 @itr_bp.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint."""
-    return jsonify({
-        'status': 'healthy',
-        'ocr_available': processor.use_ocr,
+    return jsonify({'status': 'healthy', 'timestamp': datetime.now().isoformat()}), 200
+
+
+@itr_bp.route('/diagnose', methods=['GET'])
+def diagnose():
+    """Ping OpenAI, check env vars, and return a production health report."""
+    import os, requests as _req
+    report = {
         'timestamp': datetime.now().isoformat(),
-    }), 200
+        'openai_api_key_set': bool(os.getenv('OPENAI_API_KEY')),
+        'openai_model': os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+        'openai_ping': None,
+        'processor_init': None,
+        'errors': []
+    }
+
+    # 1 ── Test OpenAI text API
+    try:
+        key = os.getenv('OPENAI_API_KEY', '')
+        r = _req.post(
+            'https://api.openai.com/v1/chat/completions',
+            headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+            json={
+                'model': os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
+                'messages': [{'role': 'user', 'content': 'Reply with {"ok":true}'}],
+                'max_tokens': 10,
+                'response_format': {'type': 'json_object'},
+                'temperature': 0.0,
+            },
+            timeout=20,
+        )
+        report['openai_ping'] = f'HTTP {r.status_code}'
+        if r.status_code == 200:
+            report['openai_text_response'] = r.json()['choices'][0]['message']['content']
+        else:
+            report['errors'].append(f'OpenAI returned {r.status_code}: {r.text[:200]}')
+    except Exception as exc:
+        report['openai_ping'] = 'FAILED'
+        report['errors'].append(f'OpenAI ping error: {exc}')
+
+    # 2 ── Test processor lazy-init
+    try:
+        _get_processor()
+        report['processor_init'] = 'OK'
+    except Exception as exc:
+        report['processor_init'] = 'FAILED'
+        report['errors'].append(f'Processor init error: {exc}')
+
+    report['healthy'] = len(report['errors']) == 0
+    return jsonify(report), 200
