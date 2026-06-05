@@ -1,6 +1,4 @@
-﻿const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://localhost:5000/api'
-  : 'https://fairtax-backend.onrender.com/api';
+﻿const API = 'https://fairtax-backend.onrender.com/api'; // TEMP: always live backend for testing
 
 let currentStep = 1;
 const TOTAL = 7;
@@ -10,10 +8,11 @@ let submissionId = localStorage.getItem("submission_id") || "";
 
 // Store refund amounts from backend calculation
 let refundAmounts = { A: 0, B: 0, C: 0 };
-// 🔥 RESET if backend restarted
-if (!localStorage.getItem("session_active")) {
+// Reset submission_id at the start of every new browser session (tab open/close)
+if (!sessionStorage.getItem("session_active")) {
   localStorage.removeItem("submission_id");
-  localStorage.setItem("session_active", "1");
+  submissionId = "";
+  sessionStorage.setItem("session_active", "1");
 }
 
 const $ = (s) => document.querySelector(s);
@@ -287,6 +286,91 @@ let filingType = "regular"; // Pre-set to regular filing on filing.html
 let referralCode = localStorage.getItem("referral_code") || "";
 let cameraStream = null;
 let cameraTargetInput = null;
+// ── EXTRACTION LOADER — tips + cancel ────────────────────────────────────────
+const TAX_TIPS = [
+  "💡 Section 80C lets you save up to ₹1.5L in tax — PPF, ELSS, and EPF contributions all qualify.",
+  "💡 HRA exemption applies even if rent is paid to a family member, with a proper rental agreement.",
+  "💡 NPS (Section 80CCD(1B)) gives ₹50,000 extra deduction beyond the ₹1.5L 80C limit.",
+  "💡 Standard deduction of ₹75,000 under New Regime applies automatically — no proof needed.",
+  "💡 Home loan interest up to ₹2 lakh per year is deductible under Section 24(b) in Old Regime.",
+  "💡 If your total income is ≤₹12L under New Regime, the 87A rebate wipes your tax liability to zero.",
+  "💡 Medical insurance premiums qualify under Section 80D — up to ₹25,000 for self and family.",
+  "💡 LTA (Leave Travel Allowance) is tax-free for actual domestic travel — two trips in a 4-year block.",
+  "💡 Professional tax paid is deductible from gross salary — typically ₹2,400 per year.",
+  "💡 Gratuity up to ₹20 lakh received on retirement is fully exempt under Section 10(10).",
+  "💡 Donations to PM-CARES or the National Relief Fund qualify for 100% deduction under Section 80G.",
+  "💡 ELSS mutual funds lock in for just 3 years and count toward 80C — shortest lock-in of any 80C option.",
+];
+
+let _tipInterval = null;
+let _extractController = null;
+
+function startExtractionLoader() {
+  const loader = document.getElementById("extractionLoader");
+  const tipEl = document.getElementById("extractTip");
+
+  if (loader) {
+    loader.style.display = "block";
+    loader.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  if (tipEl) {
+    let idx = 0;
+    tipEl.textContent = TAX_TIPS[idx];
+    tipEl.classList.remove("tip-fade-out");
+    clearInterval(_tipInterval);
+    _tipInterval = setInterval(() => {
+      tipEl.classList.add("tip-fade-out");
+      setTimeout(() => {
+        idx = (idx + 1) % TAX_TIPS.length;
+        tipEl.textContent = TAX_TIPS[idx];
+        tipEl.classList.remove("tip-fade-out");
+      }, 400);
+    }, 3000);
+  }
+
+  _extractController = new AbortController();
+  return _extractController.signal;
+}
+
+function stopExtractionLoader() {
+  const loader = document.getElementById("extractionLoader");
+  if (loader) loader.style.display = "none";
+  clearInterval(_tipInterval);
+  _tipInterval = null;
+}
+
+async function cancelExtraction() {
+  if (_extractController) {
+    _extractController.abort();
+    _extractController = null;
+  }
+  stopExtractionLoader();
+
+  if (currentStep === 2) {
+    // Skip extraction — save step data and advance to Step 3
+    try { await savePhase(); } catch (e) {}
+    currentStep++;
+    showStep(currentStep);
+  } else if (currentStep === 3) {
+    // Cancel any in-flight background extractions, serialize what we have, advance to Step 4
+    Object.values(_step3Controllers).forEach((c) => { try { c.abort(); } catch (e) {} });
+    serializeAllInvestmentProofs();
+    try { await savePhase(); } catch (e) {}
+    currentStep++;
+    showStep(currentStep);
+  } else {
+    // Submit loader cancelled — just restore the form
+    const statusEl = document.getElementById("extractStatus") || document.querySelector(".status.loading");
+    if (statusEl) {
+      statusEl.style.display = "block";
+      statusEl.className = "status";
+      statusEl.textContent = "Fill in the fields below.";
+    }
+    $("#submit").disabled = false;
+  }
+}
+
 async function uploadDocs(inputId, docType) {
   const input = $(`#${inputId}`);
   if (!input || !input.files.length) return;
@@ -298,20 +382,11 @@ async function uploadDocs(inputId, docType) {
   fd.append("submission_id", submissionId);
 
   const status = $("#extractStatus");
-  const loader = document.getElementById("extractionLoader");
-
-  if (loader) {
-    loader.style.display = "block";
-    loader.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-  if (status) {
-    status.className = "status loading";
-    status.textContent = "🔍 AI reading your documents...";
-  }
+  const signal = startExtractionLoader();
 
   try {
     // Use /api/itr/extract for ITR-specific extraction
-    const r = await fetch(`${API}/itr/extract`, { method: "POST", body: fd });
+    const r = await fetch(`${API}/itr/extract`, { method: "POST", body: fd, signal });
     const j = await r.json();
 
     if (j.success && j.data) {
@@ -416,14 +491,13 @@ async function uploadDocs(inputId, docType) {
       status.textContent = "⚠️ Could not extract — fill manually.";
     }
   } catch (e) {
+    if (e.name === "AbortError") return;
     if (status) {
       status.className = "status error";
       status.textContent = "❌ " + e.message;
     }
   } finally {
-    if (loader) {
-      loader.style.display = "none";
-    }
+    stopExtractionLoader();
   }
 }
 
@@ -965,8 +1039,17 @@ $("#next").onclick = async () => {
           return;
         }
 
-        // Save submission for REGULAR filing (failure is non-blocking)
-        await savePhase();
+        // Save submission for REGULAR filing — retry once, block on failure
+        let s1Result = await savePhase();
+        if (!s1Result || !submissionId) {
+          // Backend may have been cold-starting — wait 4s and retry once
+          await new Promise((res) => setTimeout(res, 4000));
+          s1Result = await savePhase();
+        }
+        if (!s1Result || !submissionId) {
+          alert("Could not reach the server. Please wait a moment and try again.");
+          return;
+        }
       } else if (filingType === "free") {
         // For FREE filing, auto-save Step 1 to generate referral code with correct name
         if (!referralCode && !localStorage.getItem("referral_code")) {
@@ -1019,30 +1102,14 @@ $("#next").onclick = async () => {
     await uploadDocs("payslips", "payslip");
   }
 
-  // STEP 3 → serialize structured proof JSON into hidden fields before saving
+  // STEP 3 → wait for any still-running background extractions, then serialize
   if (currentStep === 3) {
-    // Trigger extraction for all uploaded investment documents (if present)
-    const jobs = [
-      ["docHome", "homeloan", "homeLoanStatus"],
-      ["docInsLife", "insurance", "lifeInsStatus"],
-      ["docInsHealth", "insurance", "healthSelfStatus"],
-      ["docNps", "nps", "npsStatus"],
-      ["docSchool", "school", "schoolStatus"],
-      ["docDon", "donation", "donationStatus"],
-    ];
-
-    for (const [inputId, docType, statusId] of jobs) {
-      const inp = document.getElementById(inputId);
-      if (inp && inp.files && inp.files.length) {
-        try {
-          await extractSection(inputId, docType, statusId);
-        } catch (e) {
-          console.warn("Extraction failed for", inputId, e);
-        }
-      }
+    const inFlight = Object.values(_step3Promises).filter(Boolean);
+    if (inFlight.length) {
+      startExtractionLoader();
+      await Promise.allSettled(inFlight);
+      stopExtractionLoader();
     }
-
-    // After extraction, serialize any created entries into the hidden JSON fields
     serializeAllInvestmentProofs();
   }
 
@@ -1078,8 +1145,16 @@ $("#submit").onclick = async () => {
     Object.assign(all, collectStep(i));
   }
 
-  $("#submit").textContent = "Submitting...";
   $("#submit").disabled = true;
+
+  // Show animated loader with submit-specific messaging
+  startExtractionLoader();
+  const _loaderTitle = document.querySelector(".loader-title");
+  const _loaderSub   = document.querySelector(".loader-sub");
+  const _cancelBtn   = document.querySelector(".cancel-extract-btn");
+  if (_loaderTitle) _loaderTitle.textContent = "Calculating your refund";
+  if (_loaderSub)   _loaderSub.textContent   = "Crunching numbers — usually 15–30 seconds";
+  if (_cancelBtn)   _cancelBtn.style.display  = "none";
 
   try {
     const r = await fetch(`${API}/submit`, {
@@ -1121,7 +1196,12 @@ $("#submit").onclick = async () => {
     alert("Network error: " + e.message);
   }
 
-  $("#submit").textContent = "Submit";
+  stopExtractionLoader();
+  // Restore loader text for future extraction use
+  if (_loaderTitle) _loaderTitle.textContent = "AI is reading your documents";
+  if (_loaderSub)   _loaderSub.textContent   = "Usually takes 10–20 seconds";
+  if (_cancelBtn)   _cancelBtn.style.display  = "";
+
   $("#submit").disabled = false;
 };
 
@@ -1655,6 +1735,65 @@ document
     this.dataset.manualOverride = this.value ? "1" : "";
   });
 
+// ── STEP 3: BACKGROUND EXTRACTION (fires on file select, no global loader) ───
+const STEP3_DOCS = [
+  ["docHome",      "homeloan",  "homeLoanStatus"],
+  ["docInsLife",   "insurance", "lifeInsStatus"],
+  ["docInsHealth", "insurance", "healthSelfStatus"],
+  ["docNps",       "nps",       "npsStatus"],
+  ["docSchool",    "school",    "schoolStatus"],
+  ["docDon",       "donation",  "donationStatus"],
+];
+const _step3Controllers = {};
+const _step3Promises    = {};
+
+async function extractSectionBg(inputId, docType, statusId) {
+  const input = document.getElementById(inputId);
+  if (!input || !input.files.length) return;
+
+  if (_step3Controllers[inputId]) _step3Controllers[inputId].abort();
+  const controller = new AbortController();
+  _step3Controllers[inputId] = controller;
+
+  const statusEl = document.getElementById(statusId);
+  if (statusEl) {
+    statusEl.style.display = "block";
+    statusEl.className = "status loading";
+    statusEl.textContent = "🔍 Extracting…";
+  }
+
+  const fd = new FormData();
+  [...input.files].forEach((f) => fd.append("file", f));
+  fd.append("doc_type", docType);
+  fd.append("submission_id", submissionId);
+
+  try {
+    const r = await fetch(`${API}/itr/extract`, {
+      method: "POST",
+      body: fd,
+      signal: controller.signal,
+    });
+    const j = await r.json();
+    if (j.success && j.data && Object.keys(j.data).length > 0) {
+      fillInvestmentFields(j.data, docType);
+      if (statusEl) {
+        _lastExtraction[inputId] = { data: j.data, docType };
+        statusEl.className = "status success";
+        statusEl.innerHTML = `✅ Extracted! ${_dvVerifyBtn(inputId)}`;
+      }
+    } else if (statusEl) {
+      statusEl.className = "status";
+      statusEl.textContent = "⚠️ Could not extract — fill fields manually.";
+    }
+  } catch (err) {
+    if (err.name === "AbortError") return;
+    if (statusEl) {
+      statusEl.className = "status error";
+      statusEl.textContent = "❌ " + err.message;
+    }
+  }
+}
+
 // ── INLINE DOCUMENT EXTRACTION ───────────────────────────────────────────
 async function extractSection(inputId, docType, statusId) {
   const input = document.getElementById(inputId);
@@ -1663,13 +1802,9 @@ async function extractSection(inputId, docType, statusId) {
     return;
   }
 
-  const loader = document.getElementById("extractionLoader");
   const statusEl = document.getElementById(statusId);
+  const signal = startExtractionLoader();
 
-  if (loader) {
-    loader.style.display = "block";
-    loader.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
   if (statusEl) {
     statusEl.style.display = "block";
     statusEl.className = "status loading";
@@ -1683,7 +1818,7 @@ async function extractSection(inputId, docType, statusId) {
 
   try {
     // Use /api/itr/extract for proper ITR extraction
-    const r = await fetch(`${API}/itr/extract`, { method: "POST", body: fd });
+    const r = await fetch(`${API}/itr/extract`, { method: "POST", body: fd, signal });
     const j = await r.json();
 
     if (j.success && j.data && Object.keys(j.data).length > 0) {
@@ -1701,14 +1836,13 @@ async function extractSection(inputId, docType, statusId) {
       }
     }
   } catch (err) {
+    if (err.name === "AbortError") return;
     if (statusEl) {
       statusEl.className = "status error";
       statusEl.textContent = "❌ " + err.message;
     }
   } finally {
-    if (loader) {
-      loader.style.display = "none";
-    }
+    stopExtractionLoader();
   }
 }
 
@@ -1926,6 +2060,16 @@ function initPremiumEffects() {
 }
 
 showStep(1);
+
+// ── STEP 3: wire auto-extract the moment a file is selected ──────────────────
+STEP3_DOCS.forEach(([inputId, docType, statusId]) => {
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  inp.addEventListener("change", () => {
+    if (!inp.files.length) return;
+    _step3Promises[inputId] = extractSectionBg(inputId, docType, statusId);
+  });
+});
 
 // Initialize premium effects on DOM ready
 if (document.readyState === "loading") {
