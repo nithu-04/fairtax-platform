@@ -942,165 +942,141 @@ def submit():
             print(f"[TAX_CALC] Engine failed: {te}")
             traceback.print_exc()
 
-        # Try AI for enrichment (assumptions, pdf_summary, calculation_notes)
-        ai_calc = None
-        try:
-            ai_calc = ai_service.calculate_tax_ai(merged_data)
-        except Exception as e:
-            print(f"[TAX_CALC] AI enrichment failed (non-blocking): {e}")
+        # Determine referral code immediately (needed for response + background task)
+        ref_code = data.get('referral_code') or (existing_rec.get("referral_code", "") if existing_rec else "")
 
-        # Merge: start with AI (rich structure) then override all numeric
-        # tax/deduction fields with the deterministic engine values
-        if ai_calc and isinstance(ai_calc, dict):
-            calc = ai_calc
-            # Engine values override AI for every numeric field
-            for k, v in engine_calc.items():
-                calc[k] = v
-            # Also patch nested structures that save_calculation_by_row reads
-            calc.setdefault('deductions_80', {}).update({
-                'sec_80c': engine_calc.get('sec_80c', 0),
-                'sec_80d': engine_calc.get('sec_80d', 0),
-                'sec_80e': engine_calc.get('sec_80e', 0),
-                'sec_80g': engine_calc.get('sec_80g', 0),
-                'sec_80ccd_1b': engine_calc.get('sec_80ccd_1b', 0),
-                'sec_80ccd_2': engine_calc.get('sec_80ccd_2', 0),
-                'savings_interest': engine_calc.get('savings_interest', 0),
-                'total_deductions_80': engine_calc.get('deductions_total', 0),
-            })
-            calc.setdefault('calculations', {}).update({
-                'taxable_new': engine_calc.get('taxable_new', 0),
-                'new_total_tax': engine_calc.get('total_tax_new', 0),
-                'new_refund_or_due': engine_calc.get('refund_new', 0),
-                'taxable_old': engine_calc.get('taxable_old_a', 0),
-                'old_total_tax': engine_calc.get('total_tax_old_a', 0),
-                'old_refund_or_due': engine_calc.get('refund_old_a', 0),
-            })
-            calc.setdefault('compatibility_summary', {}).update(engine_calc)
-            print("[TAX_CALC] Merged engine values into AI enrichment")
-        else:
-            calc = engine_calc
-
-        # [OK] ADD VALIDATION STATUS TO CALC before saving
-        # Recommendation should only run if validation passed
-        calc['_validation_passed'] = validation_report.get('valid', False)
-        calc['_validation_errors'] = validation_report.get('errors', [])
-        calc['_validation_warnings'] = validation_report.get('warnings', [])
-
-        sheets_service.save_calculation_by_row(row, calc)
-
-        # [OK] Flag data conflicts for auditor review (if any were detected during extraction)
-        try:
-            conflicts_list = merged_data.get('_form16_payslip_conflicts', [])
-            if conflicts_list:
-                # Build conflict summary for auditor notes
-                conflict_summary = f"[WARN] DATA CONFLICTS DETECTED ({len(conflicts_list)} conflicts):\n"
-                for conflict in conflicts_list:
-                    conflict_summary += (
-                        f"• {conflict.get('field_name', conflict.get('field'))}: "
-                        f"Form 16 = ₹{conflict.get('form16_value'):,.0f}, "
-                        f"Payslip (annualized) = ₹{conflict.get('payslip_annualized_value'):,.0f} "
-                        f"({conflict.get('variance_percent', 0):.1f}% diff). "
-                        f"Using Form 16 value. Severity: {conflict.get('severity', 'MEDIUM')}\n"
-                    )
-
-                # Append to auditor_notes in Sheets for review
-                existing_notes = (merged_data.get('auditor_notes') or "")
-                conflict_summary += f"\nResolution: Used Form 16 (primary) over Payslip (monthly). Auditor should verify if discrepancy is due to mid-year salary changes, bonuses, or leaves."
-
-                if existing_notes:
-                    conflict_summary = existing_notes + "\n---\n" + conflict_summary
-
-                sheets_service.update_row(row, {"auditor_notes": conflict_summary})
-                print(f"[CONFLICT] Flagged {len(conflicts_list)} conflicts for auditor review")
-        except Exception as conflict_flag_e:
-            print(f"[CONFLICT] Failed to flag conflicts for auditor (non-blocking): {conflict_flag_e}")
-
-        # [OK] Verify calculation consistency before finalizing
-        is_valid, issues = sheets_service.verify_calculation_consistency(submission_id, calc)
-        if not is_valid:
-            print(f"[SUBMIT][{submission_id}] Calculation validation failed: {issues}")
-            # Log but don't block submission — auditor will review
-
-        # [OK] Determine referral code to return. Prefer client-provided value
-        # (sent from frontend/localStorage) so UI shows it immediately; fallback
-        # to sheet value when available.
-        rec = sheets_service.check_approval(submission_id)
-        ref_code = data.get('referral_code') or (rec.get("referral_code", "") if rec else "")
-
-        # referral logging
-        if data.get("referred_by"):
-            sheets_service.log_referral(
-                data["referred_by"],
-                data.get("name", ""),
-                data.get("phone", "")
-            )
-
-        # Log 5 referrals from referral-filing form (if present)
-        # BACKEND VALIDATION: Normalize and validate all referral data
-        referrer_name = data.get("referrer_name", "") or data.get("name", "")
-        logged_phones = set()  # Track logged phones to prevent duplicates
-
-        for i in range(1, 6):
-            ref_name = (data.get(f"ref_name_{i}", "") or "").strip()
-            ref_phone_raw = (data.get(f"ref_phone_{i}", "") or "").strip()
-
-            # Skip empty entries
-            if not ref_name or not ref_phone_raw:
-                continue
-
-            # Normalize phone: extract digits and take last 10
-            phone_digits = ''.join(c for c in ref_phone_raw if c.isdigit())
-
-            # VALIDATION: Phone must be at least 10 digits
-            if len(phone_digits) < 10:
-                print(f"[REFERRAL] Skipped referral {i}: Invalid phone format '{ref_phone_raw}' (needs 10+ digits)")
-                continue
-
-            # Use last 10 digits for Indian phone numbers
-            ref_phone = phone_digits[-10:]
-
-            # DEDUPLICATION: Skip if same phone already logged in this batch
-            if ref_phone in logged_phones:
-                print(f"[REFERRAL] Skipped referral {i}: Duplicate phone {ref_phone}")
-                continue
-
-            logged_phones.add(ref_phone)
-
-            # Log the validated referral
+        # ── BACKGROUND TASK: AI enrichment, sheet writes, WhatsApp, webhook ──────
+        # None of these are needed to compute the refund amounts returned to the
+        # frontend. Run them in a daemon thread so the response goes out immediately.
+        def _background(row, merged_data, engine_calc, data, ref_code, submission_id, validation_report):
             try:
-                sheets_service.log_referral(ref_code, ref_name, ref_phone)
-                print(f"[REFERRAL] Logged referral {i}: {ref_name} ({ref_phone})")
-            except Exception as e:
-                print(f"[REFERRAL] Error logging referral {i}: {e}")
+                # AI enrichment (optional — engine values override all numerics anyway)
+                ai_calc = None
+                try:
+                    ai_calc = ai_service.calculate_tax_ai(merged_data)
+                except Exception as e:
+                    print(f"[BG][TAX_CALC] AI enrichment failed: {e}")
 
-        # WhatsApp (still uses phone) — non-blocking, errors don't block submission
-        try:
-            wa_phone = whatsapp_service.normalize_phone(data.get("phone", ""))
-            if wa_phone:
-                # Send WhatsApp template and log response for debugging
-                wa_resp = whatsapp_service.send_template(
-                    wa_phone,
-                    "submission_received",
-                    [data.get("name", "there"), ref_code]
-                )
-                print(f"[WA][submit] template send response: {wa_resp}")
-        except Exception as wa_err:
-            print(f"[WA][submit] WARNING - WhatsApp notification failed (non-blocking): {wa_err}")
-            # Continue with submission regardless — WhatsApp is secondary
+                if ai_calc and isinstance(ai_calc, dict):
+                    calc = ai_calc
+                    for k, v in engine_calc.items():
+                        calc[k] = v
+                    calc.setdefault('deductions_80', {}).update({
+                        'sec_80c': engine_calc.get('sec_80c', 0),
+                        'sec_80d': engine_calc.get('sec_80d', 0),
+                        'sec_80e': engine_calc.get('sec_80e', 0),
+                        'sec_80g': engine_calc.get('sec_80g', 0),
+                        'sec_80ccd_1b': engine_calc.get('sec_80ccd_1b', 0),
+                        'sec_80ccd_2': engine_calc.get('sec_80ccd_2', 0),
+                        'savings_interest': engine_calc.get('savings_interest', 0),
+                        'total_deductions_80': engine_calc.get('deductions_total', 0),
+                    })
+                    calc.setdefault('calculations', {}).update({
+                        'taxable_new': engine_calc.get('taxable_new', 0),
+                        'new_total_tax': engine_calc.get('total_tax_new', 0),
+                        'new_refund_or_due': engine_calc.get('refund_new', 0),
+                        'taxable_old': engine_calc.get('taxable_old_a', 0),
+                        'old_total_tax': engine_calc.get('total_tax_old_a', 0),
+                        'old_refund_or_due': engine_calc.get('refund_old_a', 0),
+                    })
+                    calc.setdefault('compatibility_summary', {}).update(engine_calc)
+                else:
+                    calc = engine_calc
 
-        # Apps Script webhook (fire-and-forget, non-blocking)
-        if Config.APPS_SCRIPT_WEBHOOK_URL:
-            try:
-                _requests.post(Config.APPS_SCRIPT_WEBHOOK_URL, json={
-                    "event": "new_submission",
-                    "submission_id": submission_id,
-                    "name": data.get("name", ""),
-                    "phone": data.get("phone", ""),
-                    "referral_code": ref_code,
-                    "timestamp": data.get("timestamp", "")
-                }, timeout=5)
-            except Exception:
-                pass
+                calc['_validation_passed'] = validation_report.get('valid', False)
+                calc['_validation_errors'] = validation_report.get('errors', [])
+                calc['_validation_warnings'] = validation_report.get('warnings', [])
+
+                try:
+                    sheets_service.save_calculation_by_row(row, calc)
+                except Exception as e:
+                    print(f"[BG][SHEETS] save_calculation_by_row failed: {e}")
+
+                # Flag data conflicts for auditor review
+                try:
+                    conflicts_list = merged_data.get('_form16_payslip_conflicts', [])
+                    if conflicts_list:
+                        conflict_summary = f"[WARN] DATA CONFLICTS DETECTED ({len(conflicts_list)} conflicts):\n"
+                        for conflict in conflicts_list:
+                            conflict_summary += (
+                                f"• {conflict.get('field_name', conflict.get('field'))}: "
+                                f"Form 16 = ₹{conflict.get('form16_value'):,.0f}, "
+                                f"Payslip (annualized) = ₹{conflict.get('payslip_annualized_value'):,.0f} "
+                                f"({conflict.get('variance_percent', 0):.1f}% diff). "
+                                f"Using Form 16 value. Severity: {conflict.get('severity', 'MEDIUM')}\n"
+                            )
+                        existing_notes = (merged_data.get('auditor_notes') or "")
+                        conflict_summary += "\nResolution: Used Form 16 (primary) over Payslip (monthly). Auditor should verify if discrepancy is due to mid-year salary changes, bonuses, or leaves."
+                        if existing_notes:
+                            conflict_summary = existing_notes + "\n---\n" + conflict_summary
+                        sheets_service.update_row(row, {"auditor_notes": conflict_summary})
+                        print(f"[BG][CONFLICT] Flagged {len(conflicts_list)} conflicts for auditor")
+                except Exception as e:
+                    print(f"[BG][CONFLICT] Error: {e}")
+
+                # Verify calculation consistency
+                try:
+                    is_valid, issues = sheets_service.verify_calculation_consistency(submission_id, calc)
+                    if not is_valid:
+                        print(f"[BG][VERIFY] Consistency issues: {issues}")
+                except Exception as e:
+                    print(f"[BG][VERIFY] Error: {e}")
+
+                # Log referrals
+                try:
+                    if data.get("referred_by"):
+                        sheets_service.log_referral(data["referred_by"], data.get("name", ""), data.get("phone", ""))
+                    logged_phones = set()
+                    for i in range(1, 6):
+                        ref_name = (data.get(f"ref_name_{i}", "") or "").strip()
+                        ref_phone_raw = (data.get(f"ref_phone_{i}", "") or "").strip()
+                        if not ref_name or not ref_phone_raw:
+                            continue
+                        phone_digits = ''.join(c for c in ref_phone_raw if c.isdigit())
+                        if len(phone_digits) < 10:
+                            continue
+                        ref_phone = phone_digits[-10:]
+                        if ref_phone in logged_phones:
+                            continue
+                        logged_phones.add(ref_phone)
+                        sheets_service.log_referral(ref_code, ref_name, ref_phone)
+                        print(f"[BG][REFERRAL] Logged: {ref_name} ({ref_phone})")
+                except Exception as e:
+                    print(f"[BG][REFERRAL] Error: {e}")
+
+                # WhatsApp notification
+                try:
+                    wa_phone = whatsapp_service.normalize_phone(data.get("phone", ""))
+                    if wa_phone:
+                        wa_resp = whatsapp_service.send_template(wa_phone, "submission_received", [data.get("name", "there"), ref_code])
+                        print(f"[BG][WA] Response: {wa_resp}")
+                except Exception as e:
+                    print(f"[BG][WA] Failed (non-blocking): {e}")
+
+                # Apps Script webhook
+                if Config.APPS_SCRIPT_WEBHOOK_URL:
+                    try:
+                        _requests.post(Config.APPS_SCRIPT_WEBHOOK_URL, json={
+                            "event": "new_submission",
+                            "submission_id": submission_id,
+                            "name": data.get("name", ""),
+                            "phone": data.get("phone", ""),
+                            "referral_code": ref_code,
+                            "timestamp": data.get("timestamp", "")
+                        }, timeout=5)
+                    except Exception:
+                        pass
+
+            except Exception as bg_err:
+                print(f"[BG][SUBMIT] Background task error: {bg_err}")
+
+        import threading
+        threading.Thread(
+            target=_background,
+            args=(row, merged_data, engine_calc, data, ref_code, submission_id, validation_report),
+            daemon=True
+        ).start()
+        print(f"[SUBMIT] Background task fired — returning response immediately")
 
         response_data = {
             "success": True,

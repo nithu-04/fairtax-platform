@@ -101,17 +101,46 @@ Return ONLY valid JSON. All monetary values must be whole integers (no decimals,
 CRITICAL: Use 0 for missing fields. Never invent. Never use monthly column values for YTD payslips."""
 
 INVESTMENT_PROMPTS = {
-    "homeloan": """You are an Indian tax expert extracting home loan data for ITR filing.
+    "homeloan": """You are an Indian tax expert. Extract home loan data for ITR filing (FY 2025-26 / AY 2026-27).
 
-Extract the following from this Home Loan Interest Certificate / Repayment Statement / Bank Statement:
+DOCUMENT TYPE: Home Loan Interest Certificate / Annual Statement / Repayment Schedule / Amortization Statement
 
-home_loan_interest  → Total interest paid in this financial year (for Section 24 deduction)
-                      Look for: "Interest paid", "Interest component", "Total interest", "Interest for the year"
-home_loan_principal → Total principal repaid in this financial year (for Section 80C deduction)
-                      Look for: "Principal paid", "Principal component", "Principal repaid", "Repayment"
-loan_account_no     → Loan account / reference number
-bank_name           → Bank or NBFC name
-loan_outstanding    → Outstanding loan balance (remaining principal)
+━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+home_loan_interest  → TOTAL interest paid during FY 2025-26 (Apr 2025 – Mar 2026)
+                      Labels: "Interest paid", "Total interest", "Interest for the year",
+                      "Interest component", "Interest charged", "Finance charges",
+                      "Interest amount", "Interest accrued", "Total interest payable",
+                      "Interest paid during FY", "Annual interest"
+                      ⚠ If installment-wise table shown → SUM all interest rows for FY 2025-26
+                      ⚠ Do NOT use outstanding or cumulative interest from previous years
+
+home_loan_principal → TOTAL principal repaid during FY 2025-26 (Apr 2025 – Mar 2026)
+                      Labels: "Principal paid", "Principal component", "Principal repaid",
+                      "Principal amount", "Repayment of principal", "EMI principal",
+                      "Principal payment", "Capital repaid"
+                      ⚠ If installment-wise table shown → SUM all principal rows for FY 2025-26
+
+loan_account_no     → Loan account or reference number
+                      Labels: "Loan account no", "Account number", "Loan reference",
+                      "Loan ID", "Loan no", "Account no", "Reference no"
+
+bank_name           → Bank or NBFC name (usually in header or letterhead)
+                      Examples: HDFC Bank, SBI, ICICI Bank, Axis Bank, Kotak Bank,
+                      LIC Housing Finance, PNB Housing, HDFC Ltd, Bajaj Finserv,
+                      Aditya Birla Housing, Tata Capital, Indiabulls Housing
+
+loan_outstanding    → Remaining principal outstanding at end of FY or document date
+                      Labels: "Outstanding balance", "Principal outstanding", "Closing balance",
+                      "Balance outstanding", "Outstanding principal", "Principal balance"
+
+━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• Annual totals only — Apr 2025 to Mar 2026
+• If monthly/quarterly breakdown shown, SUM interest and principal separately
+• All amounts as plain integers in INR (strip ₹, Rs., commas, decimals)
+• Use 0 for amounts not found; "" for text fields not found
+• NEVER invent or estimate values
 
 Return ONLY valid JSON:
 {
@@ -120,67 +149,113 @@ Return ONLY valid JSON:
   "loan_account_no": "",
   "bank_name": "",
   "loan_outstanding": 0
-}
+}""",
 
-RULES:
-• Use the ANNUAL (full financial year) figures only
-• All amounts as plain integers in INR (remove decimals and commas)
-• Use 0 for amounts not found; use "" for text fields not found
-• Never invent or estimate values""",
+    "school": """You are an Indian tax expert. Extract school fee data for ITR filing (FY 2025-26 / AY 2026-27).
 
-    "school": """You are an Indian tax expert extracting school fee data for ITR filing.
+DOCUMENT TYPE: School Fee Receipt / Tuition Fee Certificate / Fee Payment Acknowledgement
 
-Extract the following from this School Fee Receipt / Tuition Fee Certificate:
+━━━ CRITICAL: Only TUITION FEES qualify for Section 80C. ━━━━━━━━━━━━━━━━━
+Do NOT include: development fees, building fund, transport, hostel, uniform,
+books, lunch, activity fees, exam fees, or any non-tuition charges.
+ONLY tuition / academic / course fees count.
 
-school_fees → Total annual tuition/school fees paid (for Section 80C deduction)
-              Look for: "Tuition fees", "School fees", "Annual fees", "Total fees paid"
-school_name → Full name of the school / institution
+━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+school_fees → ANNUAL tuition fees paid during FY 2025-26 (Apr 2025 – Mar 2026)
+              Labels: "Tuition fees", "Tuition fee", "School fees", "Academic fees",
+              "Course fees", "Fees paid", "Total tuition", "Tuition charges"
+              ⚠ If receipt shows term/quarterly fees → SUM all payments in FY 2025-26
+              ⚠ Exclude development fee, building fund, transport, hostel etc.
+
+school_name → Full name of the school or institution (from header or letterhead)
+
+━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• Annual tuition total only (Apr 2025 – Mar 2026)
+• school_fees as plain integer in INR
+• NEVER invent values
 
 Return ONLY valid JSON:
 {
   "school_fees": 0,
   "school_name": ""
-}
+}""",
 
-RULES:
-• Extract ANNUAL total fees (if monthly shown, multiply by 12)
-• school_fees as plain integer in INR
-• Never invent values""",
+    "nps": """You are an Indian tax expert. Extract NPS data for ITR filing (FY 2025-26 / AY 2026-27).
 
-    "nps": """You are an Indian tax expert extracting NPS data for ITR filing.
+DOCUMENT TYPE: NPS Account Statement / PRAN Statement / NPS Transaction Statement
 
-Extract the following from this NPS (National Pension System) Account Statement:
+━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-nps_pran     → PRAN number (Permanent Retirement Account Number) — 12-digit number
-nps_self     → Total employee / subscriber contribution for the financial year (for 80CCD(1B))
-               Look for: "Subscriber contribution", "Employee contribution", "Own contribution", "Tier I contribution (self)"
-nps_employer → Total employer contribution for the financial year (for 80CCD(2))
-               Look for: "Employer contribution", "Government contribution", "Corporate contribution"
+nps_pran     → PRAN (Permanent Retirement Account Number) — 12-digit number
+               Labels: "PRAN", "PRAN No", "PRAN Number", "Permanent Retirement Account"
+               Strip spaces if shown as groups: "1234 5678 9012" → "123456789012"
+
+nps_self     → Total SUBSCRIBER / EMPLOYEE / OWN Tier-I contribution for FY 2025-26
+               Labels: "Subscriber contribution", "Employee contribution", "Own contribution",
+               "Voluntary contribution", "Tier I - Subscriber", "Self contribution",
+               "Tier 1 employee", "Personal contribution", "Subscriber share"
+               ⚠ Tier I ONLY — EXCLUDE Tier II contributions
+               ⚠ Annual total for Apr 2025 – Mar 2026 only
+
+nps_employer → Total EMPLOYER / GOVERNMENT / CORPORATE Tier-I contribution for FY 2025-26
+               Labels: "Employer contribution", "Government contribution", "Corporate contribution",
+               "Company contribution", "Employer share", "Tier I - Employer", "Employer's NPS"
+               ⚠ Tier I ONLY — use 0 if not present
+
+━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• FY 2025-26 (Apr 2025 – Mar 2026) totals only
+• All amounts as plain integers in INR
+• Use 0 for amounts not found; "" for PRAN not found
+• NEVER invent values
 
 Return ONLY valid JSON:
 {
+  "nps_pran": "",
   "nps_self": 0,
-  "nps_employer": 0,
-  "nps_pran": ""
-}
+  "nps_employer": 0
+}""",
 
-RULES:
-• ANNUAL contribution totals for the financial year
-• All amounts as plain integers in INR
-• Use 0 for amounts not found; use "" for PRAN not found
-• Never invent values""",
+    "insurance": """You are an Indian tax expert. Extract insurance data for ITR filing (FY 2025-26 / AY 2026-27).
 
-    "insurance": """You are an Indian tax expert extracting insurance data for ITR filing.
+DOCUMENT TYPE: Insurance Premium Receipt / Policy Document / Premium Payment Acknowledgement
 
-Extract the following from this Insurance Policy / Premium Receipt:
+━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-policy_no      → Policy number or reference number
-insurer_name   → Insurance company name (LIC, HDFC Life, ICICI Prudential, Max Life, Star Health, etc.)
-premium_amount → Annual premium paid (for 80C if life/ULIP; 80D if health)
-                 Look for: "Premium paid", "Annual premium", "Premium amount", "Amount paid"
-sum_assured    → Sum assured / coverage amount / insured amount
-coverage_type  → "life" for life insurance / term plan / ULIP / endowment (→ 80C)
-                 "health" for mediclaim / health insurance / floater (→ 80D)
+policy_no      → Policy or certificate number
+                 Labels: "Policy No", "Policy Number", "Policy ID", "Plan No",
+                 "Certificate No", "Contract No", "Reference No"
+
+insurer_name   → Insurance company name (from header / letterhead)
+                 Examples: LIC of India, HDFC Life, ICICI Prudential, Max Life, SBI Life,
+                 Bajaj Allianz, Tata AIA, Kotak Mahindra Life, PNB MetLife, Aditya Birla Sun Life,
+                 Star Health, Niva Bupa (formerly Max Bupa), Care Health, Religare Health,
+                 New India Assurance, United India, National Insurance, Oriental Insurance
+
+premium_amount → ANNUAL premium ACTUALLY PAID in FY 2025-26 (Apr 2025 – Mar 2026)
+                 Labels: "Premium paid", "Premium amount", "Amount paid", "Amount received",
+                 "Total premium", "Net premium", "Premium due", "Annual premium",
+                 "Installment premium", "Premium receipt amount"
+                 ⚠ If quarterly receipt → multiply by 4 for annual
+                 ⚠ If half-yearly receipt → multiply by 2 for annual
+                 ⚠ Use amount ACTUALLY PAID this FY, not future or overdue premium
+
+sum_assured    → Life cover / insured amount
+                 Labels: "Sum assured", "Sum insured", "Coverage amount", "Life cover",
+                 "Policy amount", "Insured amount", "Face value", "Death benefit"
+
+coverage_type  → Exactly "life" or "health" — nothing else:
+                 "life"   → life insurance, term plan, ULIP, endowment, money-back, whole life
+                 "health" → mediclaim, health insurance, family floater, critical illness, top-up
+
+━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• premium_amount must be ANNUAL total paid in FY 2025-26
+• All amounts as plain integers in INR (strip ₹, Rs., commas, decimals)
+• coverage_type must be exactly "life" or "health"
+• NEVER invent values
 
 Return ONLY valid JSON:
 {
@@ -189,22 +264,38 @@ Return ONLY valid JSON:
   "premium_amount": 0,
   "sum_assured": 0,
   "coverage_type": "life"
-}
+}""",
 
-RULES:
-• ANNUAL premium (if quarterly/monthly shown, compute annual total)
-• coverage_type must be exactly "life" or "health"
+    "donation": """You are an Indian tax expert. Extract donation data for ITR filing (FY 2025-26 / AY 2026-27).
+
+DOCUMENT TYPE: Donation Receipt / 80G Certificate / Contribution Receipt
+
+━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+donation_amount   → Total amount donated in INR
+                    Labels: "Amount donated", "Donation amount", "Contribution",
+                    "Gift amount", "Amount received", "Total donation", "Received from"
+
+organization_name → Full name of the trust / NGO / charity
+                    Labels: "Name of institution", "Donee name", "Trust name",
+                    "Organisation name", "Recipient", header / letterhead name
+
+donee_pan         → PAN of the ORGANIZATION receiving the donation (needed for 80G)
+                    Format: 5 letters + 4 digits + 1 letter (e.g. AAABT1234Z)
+                    Labels: "PAN", "PAN No", "PAN of institution", "Donee PAN", "Trust PAN"
+                    ⚠ This is the ORGANIZATION'S PAN — NOT the donor's PAN
+                    ⚠ Leave "" if not clearly printed — do NOT guess
+
+receipt_number    → Receipt or certificate number
+                    Labels: "Receipt no", "Certificate no", "Reference no",
+                    "Acknowledgement no", "Serial no", "Coupon no"
+
+━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• Donation must be in FY 2025-26 (Apr 2025 – Mar 2026)
 • All amounts as plain integers in INR
-• Never invent values""",
-
-    "donation": """You are an Indian tax expert extracting donation data for ITR filing.
-
-Extract the following from this Donation Receipt / 80G Certificate:
-
-donation_amount   → Amount donated in INR
-organization_name → Name of the trust / NGO / organization that received the donation
-donee_pan         → PAN number of the organization (required for 80G deduction) — format: XXXXX9999X
-receipt_number    → Receipt / certificate number
+• NEVER invent PAN numbers — only extract if clearly printed
+• NEVER invent values
 
 Return ONLY valid JSON:
 {
@@ -212,12 +303,7 @@ Return ONLY valid JSON:
   "organization_name": "",
   "donee_pan": "",
   "receipt_number": ""
-}
-
-RULES:
-• Extract only 80G-eligible donations (must have organization PAN)
-• All amounts as plain integers in INR
-• Never invent values or PAN numbers""",
+}""",
 }
 
 
@@ -287,36 +373,128 @@ def _regex_fallback(text, doc_type):
     t = text.replace(',', '').replace('Rs.', '').replace('INR', '')
 
     if doc_type == 'homeloan':
-        m = re.search(r'interest[^\d]*(\d{4,})', t, re.I)
-        if m: result['home_loan_interest'] = int(m.group(1))
-        m = re.search(r'principal[^\d]*(\d{4,})', t, re.I)
-        if m: result['home_loan_principal'] = int(m.group(1))
-        m = re.search(r'(?:bank|lender|nbfc)[^\n]*?([A-Za-z ]{3,30})', t, re.I)
-        if m: result['bank_name'] = m.group(1).strip()
+        # Interest — try specific labels first, then generic
+        for pat in [
+            r'total interest(?:\s+paid)?(?:\s+for\s+the\s+year)?[^\d]*(\d[\d,]+)',
+            r'interest paid(?:\s+during)?(?:\s+the\s+year)?[^\d]*(\d[\d,]+)',
+            r'interest for the year[^\d]*(\d[\d,]+)',
+            r'interest amount[^\d]*(\d[\d,]+)',
+            r'interest component[^\d]*(\d[\d,]+)',
+            r'interest[^\d]{0,30}(\d{4,}[\d,]*)',
+        ]:
+            m = re.search(pat, t, re.I)
+            if m:
+                val = int(m.group(1).replace(',', ''))
+                if val > 1000:
+                    result['home_loan_interest'] = val
+                    break
+        # Principal
+        for pat in [
+            r'principal paid[^\d]*(\d[\d,]+)',
+            r'principal repaid[^\d]*(\d[\d,]+)',
+            r'principal component[^\d]*(\d[\d,]+)',
+            r'principal amount[^\d]*(\d[\d,]+)',
+            r'repayment of principal[^\d]*(\d[\d,]+)',
+            r'principal[^\d]{0,30}(\d{4,}[\d,]*)',
+        ]:
+            m = re.search(pat, t, re.I)
+            if m:
+                val = int(m.group(1).replace(',', ''))
+                if val > 1000:
+                    result['home_loan_principal'] = val
+                    break
+        # Loan account
+        m = re.search(r'(?:loan\s+account\s+no|account\s+no|loan\s+no)[^\w]*([A-Z0-9\-]{6,20})', t, re.I)
+        if m: result['loan_account_no'] = m.group(1).strip()
+        # Outstanding
+        for pat in [r'outstanding\s+(?:principal|balance)[^\d]*(\d[\d,]+)', r'closing\s+balance[^\d]*(\d[\d,]+)']:
+            m = re.search(pat, t, re.I)
+            if m:
+                result['loan_outstanding'] = int(m.group(1).replace(',', ''))
+                break
+        # Bank name from known institutions
+        for bank in ['HDFC', 'SBI', 'ICICI', 'Axis', 'Kotak', 'PNB', 'LIC Housing', 'Bajaj', 'Tata Capital', 'Aditya Birla']:
+            if re.search(re.escape(bank), t, re.I):
+                result.setdefault('bank_name', bank)
+                break
 
     elif doc_type == 'nps':
-        m = re.search(r'PRAN[^\d]*(\d{12})', t, re.I)
-        if m: result['nps_pran'] = m.group(1)
-        m = re.search(r'(?:employee|subscriber)\s+contribution[^\d]*(\d{4,})', t, re.I)
-        if m: result['nps_self'] = int(m.group(1))
-        m = re.search(r'employer\s+contribution[^\d]*(\d{4,})', t, re.I)
-        if m: result['nps_employer'] = int(m.group(1))
+        # PRAN — 12 consecutive digits
+        m = re.search(r'PRAN[^\d]*(\d[\d\s]{10,13}\d)', t, re.I)
+        if m: result['nps_pran'] = re.sub(r'\s', '', m.group(1))[:12]
+        if not result.get('nps_pran'):
+            m = re.search(r'\b(\d{12})\b', t)
+            if m: result['nps_pran'] = m.group(1)
+        # Self contribution (Tier I)
+        for pat in [
+            r'subscriber\s+contribution[^\d]*(\d[\d,]+)',
+            r'employee\s+contribution[^\d]*(\d[\d,]+)',
+            r'own\s+contribution[^\d]*(\d[\d,]+)',
+            r'voluntary\s+contribution[^\d]*(\d[\d,]+)',
+        ]:
+            m = re.search(pat, t, re.I)
+            if m:
+                result['nps_self'] = int(m.group(1).replace(',', ''))
+                break
+        # Employer contribution
+        for pat in [
+            r'employer\s+contribution[^\d]*(\d[\d,]+)',
+            r'government\s+contribution[^\d]*(\d[\d,]+)',
+            r'corporate\s+contribution[^\d]*(\d[\d,]+)',
+        ]:
+            m = re.search(pat, t, re.I)
+            if m:
+                result['nps_employer'] = int(m.group(1).replace(',', ''))
+                break
 
     elif doc_type == 'school':
-        m = re.search(r'(?:total\s+)?fee[s]?[^\d]*(\d{3,})', t, re.I)
-        if m: result['school_fees'] = int(m.group(1))
+        for pat in [
+            r'tuition\s+fee[s]?[^\d]*(\d[\d,]+)',
+            r'school\s+fee[s]?[^\d]*(\d[\d,]+)',
+            r'academic\s+fee[s]?[^\d]*(\d[\d,]+)',
+            r'(?:total\s+)?fee[s]?\s+paid[^\d]*(\d[\d,]+)',
+            r'(?:total\s+)?fee[s]?[^\d]*(\d{3,}[\d,]*)',
+        ]:
+            m = re.search(pat, t, re.I)
+            if m:
+                result['school_fees'] = int(m.group(1).replace(',', ''))
+                break
 
     elif doc_type == 'insurance':
-        m = re.search(r'premium[^\d]*(\d{3,})', t, re.I)
-        if m: result['premium_amount'] = int(m.group(1))
-        m = re.search(r'(?:policy\s+no|policy\s+number)[^\w]*([A-Z0-9\-]{6,})', t, re.I)
-        if m: result['policy_no'] = m.group(1)
+        for pat in [
+            r'premium\s+paid[^\d]*(\d[\d,]+)',
+            r'annual\s+premium[^\d]*(\d[\d,]+)',
+            r'amount\s+paid[^\d]*(\d[\d,]+)',
+            r'premium\s+amount[^\d]*(\d[\d,]+)',
+            r'premium[^\d]{0,20}(\d{3,}[\d,]*)',
+        ]:
+            m = re.search(pat, t, re.I)
+            if m:
+                result['premium_amount'] = int(m.group(1).replace(',', ''))
+                break
+        m = re.search(r'(?:policy\s+no|policy\s+number|policy\s+id)[^\w]*([A-Z0-9\-]{6,20})', t, re.I)
+        if m: result['policy_no'] = m.group(1).strip()
+        # Coverage type
+        if re.search(r'\b(mediclaim|health|floater|critical illness)\b', t, re.I):
+            result['coverage_type'] = 'health'
+        else:
+            result['coverage_type'] = 'life'
 
     elif doc_type == 'donation':
-        m = re.search(r'(?:amount|donation|gift)[^\d]*(\d{3,})', t, re.I)
-        if m: result['donation_amount'] = int(m.group(1))
-        m = re.search(r'PAN[^\w]*([A-Z]{5}[0-9]{4}[A-Z])', t, re.I)
+        for pat in [
+            r'donation\s+amount[^\d]*(\d[\d,]+)',
+            r'amount\s+donated[^\d]*(\d[\d,]+)',
+            r'amount\s+received[^\d]*(\d[\d,]+)',
+            r'(?:amount|donation|contribution)[^\d]*(\d{3,}[\d,]*)',
+        ]:
+            m = re.search(pat, t, re.I)
+            if m:
+                result['donation_amount'] = int(m.group(1).replace(',', ''))
+                break
+        m = re.search(r'\b([A-Z]{5}[0-9]{4}[A-Z])\b', t)
         if m: result['donee_pan'] = m.group(1)
+        m = re.search(r'(?:receipt\s+no|certificate\s+no|reference\s+no)[^\w]*([A-Z0-9\-\/]{3,20})', t, re.I)
+        if m: result['receipt_number'] = m.group(1).strip()
 
     if result:
         print(f"[EXTRACT][{doc_type}] regex fallback found: {result}")
@@ -652,6 +830,22 @@ def extract_from_text(text, doc_type="payslip"):
             else:
                 print(f"[EXTRACT_TEXT][form16] Deterministic found only {found} — calling AI")
 
+        elif doc_type == "homeloan":
+            det_result = _regex_fallback(text, doc_type)
+            if det_result.get("home_loan_interest", 0) > 0:
+                print(f"[EXTRACT_TEXT][homeloan] Regex found interest={det_result['home_loan_interest']} — skipping AI call")
+                result = det_result
+            else:
+                print(f"[EXTRACT_TEXT][homeloan] Regex found no interest — calling AI")
+
+        elif doc_type == "nps":
+            det_result = _regex_fallback(text, doc_type)
+            if det_result.get("nps_pran") or det_result.get("nps_self", 0) > 0:
+                print(f"[EXTRACT_TEXT][nps] Regex found PRAN/self — skipping AI call")
+                result = det_result
+            else:
+                print(f"[EXTRACT_TEXT][nps] Regex insufficient — calling AI")
+
         if result is None:
             if doc_type == "payslip":
                 prompt = PAYSLIP_TEXT_EXTRACTION_PROMPT
@@ -659,7 +853,9 @@ def extract_from_text(text, doc_type="payslip"):
                 prompt = INVESTMENT_PROMPTS.get(doc_type, EXTRACTION_PROMPT)
 
             messages = [{"role": "user", "content": f"{prompt}\n\nDOCUMENT TEXT:\n{text}"}]
-            tokens = 1200 if doc_type == "payslip" else (1000 if doc_type == "form16" else 700)
+            # Investment docs have fewer fields → shorter output → reduce tokens for lower latency
+            _investment_types = {"homeloan", "nps", "school", "insurance", "donation"}
+            tokens = 1200 if doc_type == "payslip" else (1000 if doc_type == "form16" else (450 if doc_type in _investment_types else 700))
             raw = _call_openai(messages, max_tokens=tokens)
             result = _parse_json(raw)
 
