@@ -136,34 +136,6 @@ def process_documents(file_bytes, mime_type, doc_type):
         if cached:
             return cached
 
-        # ─────── FASTEST PATH: OpenAI Responses API (native PDF, no image conversion) ───
-        # Sends raw PDF bytes directly to OpenAI — same approach ChatGPT uses.
-        # ~3-5s vs ~10-20s for Vision. Falls back silently on any error.
-        if "pdf" in (mime_type or "").lower():
-            try:
-                import ai_service as _ai
-                native_data = _ai._extract_pdf_native(file_bytes, doc_type)
-                if native_data:
-                    result = {
-                        "success": True,
-                        "data": native_data,
-                        "confidence": 0.92,
-                        "metadata": {
-                            "assumptions": [],
-                            "duplicates": [],
-                            "conflicts": [],
-                            "pages_processed": 1,
-                            "validation_warnings": [],
-                            "extraction_quality": "high",
-                            "extraction_method": "responses_api",
-                        },
-                    }
-                    _cache_set(file_bytes, doc_type, result)
-                    print(f"[DOCUMENT_PROCESSOR] Responses API path succeeded for {doc_type}")
-                    return result
-            except Exception as _e:
-                print(f"[DOCUMENT_PROCESSOR] Responses API path error: {_e} — continuing to next path")
-
         # ─────── FAST PATH: Digital PDF via pdfplumber ───
         # For digital (non-scanned) PDFs, skip image conversion + Vision API entirely.
         # This is ~3-5× faster and more accurate for clean payslips / Form 16 PDFs.

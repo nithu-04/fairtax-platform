@@ -1,4 +1,4 @@
-﻿const API = 'https://fairtax-backend.onrender.com/api';
+﻿const API = 'https://fairtax-backend.onrender.com/api'; // TEMP: always live backend for testing
 
 let currentStep = 1;
 const TOTAL = 7;

@@ -307,66 +307,6 @@ Return ONLY valid JSON:
 }
 
 
-_RESPONSES_API_URL = "https://api.openai.com/v1/responses"
-
-
-def _extract_pdf_native(file_bytes: bytes, doc_type: str):
-    """
-    Send PDF directly to OpenAI Responses API — no image conversion needed.
-    This is the fastest extraction path: ~3-5s vs ~10-20s for Vision.
-    Returns flat extracted dict, or None on failure (caller falls back to pipeline).
-    """
-    try:
-        b64 = base64.b64encode(file_bytes).decode("utf-8")
-        prompt = INVESTMENT_PROMPTS.get(doc_type, EXTRACTION_PROMPT)
-        model = Config.OPENAI_MODEL or "gpt-4o-mini"
-
-        payload = {
-            "model": model,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_file",
-                            "filename": "document.pdf",
-                            "file_data": f"data:application/pdf;base64,{b64}",
-                        },
-                        {
-                            "type": "input_text",
-                            "text": prompt,
-                        },
-                    ],
-                }
-            ],
-            "temperature": 0.0,
-            "text": {"format": {"type": "json_object"}},
-        }
-
-        headers = {
-            "Authorization": f"Bearer {Config.OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        }
-
-        r = requests.post(_RESPONSES_API_URL, headers=headers, json=payload, timeout=60)
-        r.raise_for_status()
-
-        resp = r.json()
-        output_text = resp["output"][0]["content"][0]["text"]
-        result = _parse_json(output_text)
-
-        if result and any(v for v in result.values() if v):
-            print(f"[PDF_NATIVE][{doc_type}] Responses API success — {len(result)} fields extracted")
-            return result
-
-        print(f"[PDF_NATIVE][{doc_type}] Empty result from Responses API — falling back")
-        return None
-
-    except Exception as e:
-        print(f"[PDF_NATIVE][{doc_type}] Responses API failed: {e} — falling back to pipeline")
-        return None
-
-
 _RETRYABLE_HTTP = {429, 500, 502, 503, 529}
 
 
