@@ -369,17 +369,14 @@ async function cancelExtraction() {
   stopExtractionLoader();
 
   if (currentStep === 2) {
-    // Skip extraction — save step data and advance to Step 3
-    // nextStep() will see _extractionCancelled and return early to avoid double-advance
-    try { await savePhase(); } catch (e) {}
-    currentStep++;
+    // Skip extraction entirely — jump straight to Step 4 (manual entry)
+    currentStep = 4;
     showStep(currentStep);
   } else if (currentStep === 3) {
-    // Cancel any in-flight background extractions, serialize what we have, advance to Step 4
+    // Cancel any in-flight background extractions, go straight to Step 4 (manual entry)
     Object.values(_step3Controllers).forEach((c) => { try { c.abort(); } catch (e) {} });
     serializeAllInvestmentProofs();
-    try { await savePhase(); } catch (e) {}
-    currentStep++;
+    currentStep = 4;
     showStep(currentStep);
   } else {
     // Submit loader cancelled — just restore the form
@@ -1072,8 +1069,7 @@ $("#next").onclick = async () => {
         // Save submission for REGULAR filing — retry once, block on failure
         let s1Result = await savePhase();
         if (!s1Result || !submissionId) {
-          // Backend may have been cold-starting — wait 4s and retry once
-          await new Promise((res) => setTimeout(res, 4000));
+          await new Promise((res) => setTimeout(res, 1500));
           s1Result = await savePhase();
         }
         if (!s1Result || !submissionId) {
@@ -2099,6 +2095,9 @@ function initPremiumEffects() {
 }
 
 showStep(1);
+
+// Warm up the backend on page load so Step 1 save doesn't hit a cold server
+fetch(API + '/health').catch(() => {});
 
 // ── STEP 3: wire auto-extract the moment a file is selected ──────────────────
 STEP3_DOCS.forEach(([inputId, docType, statusId]) => {
