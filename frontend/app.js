@@ -304,8 +304,26 @@ const TAX_TIPS = [
 
 let _tipInterval = null;
 let _extractController = null;
+let _extractionCancelled = false;
 
-function startExtractionLoader() {
+function _startProgress(durationSeconds) {
+  const fill = document.querySelector(".loader-progress-fill");
+  if (!fill) return;
+  fill.style.transition = "none";
+  fill.style.width = "0%";
+  fill.getBoundingClientRect(); // force reflow
+  fill.style.transition = `width ${durationSeconds}s linear`;
+  setTimeout(() => { fill.style.width = "88%"; }, 50);
+}
+
+function _resetProgress() {
+  const fill = document.querySelector(".loader-progress-fill");
+  if (!fill) return;
+  fill.style.transition = "none";
+  fill.style.width = "0%";
+}
+
+function startExtractionLoader(progressDuration = 90) {
   const loader = document.getElementById("extractionLoader");
   const tipEl = document.getElementById("extractTip");
 
@@ -325,10 +343,11 @@ function startExtractionLoader() {
         idx = (idx + 1) % TAX_TIPS.length;
         tipEl.textContent = TAX_TIPS[idx];
         tipEl.classList.remove("tip-fade-out");
-      }, 400);
-    }, 3000);
+      }, 500);
+    }, 7000);
   }
 
+  _startProgress(progressDuration);
   _extractController = new AbortController();
   return _extractController.signal;
 }
@@ -338,9 +357,11 @@ function stopExtractionLoader() {
   if (loader) loader.style.display = "none";
   clearInterval(_tipInterval);
   _tipInterval = null;
+  _resetProgress();
 }
 
 async function cancelExtraction() {
+  _extractionCancelled = true;
   if (_extractController) {
     _extractController.abort();
     _extractController = null;
@@ -349,6 +370,7 @@ async function cancelExtraction() {
 
   if (currentStep === 2) {
     // Skip extraction — save step data and advance to Step 3
+    // nextStep() will see _extractionCancelled and return early to avoid double-advance
     try { await savePhase(); } catch (e) {}
     currentStep++;
     showStep(currentStep);
@@ -1013,6 +1035,14 @@ $$(".choice").forEach((btn) => {
 });
 
 $("#next").onclick = async () => {
+  const nextBtn = $("#next");
+  if (nextBtn.disabled) return; // block re-entry while processing
+  nextBtn.disabled = true;
+  const _origNextText = nextBtn.textContent;
+  nextBtn.textContent = "Please wait…";
+
+  try {
+
   // Prevent progressing from step 1 unless filing type is explicitly chosen
   if (currentStep === 1 && !filingType) {
     alert("Please select Regular Tax or Free Tax to continue.");
@@ -1096,10 +1126,13 @@ $("#next").onclick = async () => {
     }
   }
 
+  _extractionCancelled = false;
+
   // STEP 2 → doc extract
   if (currentStep === 2) {
     await uploadDocs("form16", "form16");
     await uploadDocs("payslips", "payslip");
+    if (_extractionCancelled) return; // cancel already advanced the step
   }
 
   // STEP 3 → wait for any still-running background extractions, then serialize
@@ -1110,6 +1143,7 @@ $("#next").onclick = async () => {
       await Promise.allSettled(inFlight);
       stopExtractionLoader();
     }
+    if (_extractionCancelled) return; // cancel already advanced the step
     serializeAllInvestmentProofs();
   }
 
@@ -1121,6 +1155,11 @@ $("#next").onclick = async () => {
   if (currentStep < TOTAL) {
     currentStep++;
     showStep(currentStep);
+  }
+
+  } finally {
+    nextBtn.disabled = false;
+    nextBtn.textContent = _origNextText;
   }
 };
 
@@ -1148,12 +1187,12 @@ $("#submit").onclick = async () => {
   $("#submit").disabled = true;
 
   // Show animated loader with submit-specific messaging
-  startExtractionLoader();
+  startExtractionLoader(25);
   const _loaderTitle = document.querySelector(".loader-title");
   const _loaderSub   = document.querySelector(".loader-sub");
   const _cancelBtn   = document.querySelector(".cancel-extract-btn");
   if (_loaderTitle) _loaderTitle.textContent = "Calculating your refund";
-  if (_loaderSub)   _loaderSub.textContent   = "Crunching numbers — usually 15–30 seconds";
+  if (_loaderSub)   _loaderSub.textContent   = "Crunching numbers — usually 1–2 minutes";
   if (_cancelBtn)   _cancelBtn.style.display  = "none";
 
   try {
