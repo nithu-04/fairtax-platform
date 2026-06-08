@@ -152,9 +152,6 @@ def enhance_image_quality(img, is_scanned=False):
         return img
 
 
-MAX_PAGES_FOR_EXTRACTION = 3  # All key tax data is on the first 3 pages
-
-
 def convert_pdf_to_images(file_bytes, dpi=150):
     """
     Convert PDF to list of images with quality enhancement.
@@ -179,14 +176,10 @@ def convert_pdf_to_images(file_bytes, dpi=150):
             import fitz  # PyMuPDF
             logger.info(f"[PDF_CONVERTER] Opening PDF with PyMuPDF ({len(file_bytes)} bytes)...")
             doc = fitz.open(stream=file_bytes, filetype="pdf")
-            total_pages = len(doc)
-            pages_to_process = min(total_pages, MAX_PAGES_FOR_EXTRACTION)
-            logger.info(f"[PDF_CONVERTER] PDF opened: {total_pages} pages, processing first {pages_to_process}")
+            logger.info(f"[PDF_CONVERTER] PDF opened successfully, {len(doc)} pages found")
             images = []
 
             for page_num, page in enumerate(doc):
-                if page_num >= MAX_PAGES_FOR_EXTRACTION:
-                    break
                 try:
                     # Use higher quality pixmap
                     pix = page.get_pixmap(matrix=fitz.Matrix(dpi/72, dpi/72))
@@ -226,8 +219,6 @@ def convert_pdf_to_images(file_bytes, dpi=150):
 
             images = []
             for page_num, page in enumerate(pdf):
-                if page_num >= MAX_PAGES_FOR_EXTRACTION:
-                    break
                 try:
                     # Render page to image with specified DPI
                     # DPI scale: 72 DPI is the default, so multiply by (target_dpi / 72)
