@@ -4,7 +4,7 @@ load_dotenv()
 
 class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
     OPENAI_URL = "https://api.openai.com/v1/chat/completions"
     OCR_MODEL = os.getenv("OCR_MODEL", "baidu/qianfan-ocr-fast:free")
     OCR_USE_AI = os.getenv("OCR_USE_AI", "1").lower() in ("1", "true", "yes")
