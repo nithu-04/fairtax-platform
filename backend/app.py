@@ -134,7 +134,9 @@ except Exception as _e:
 
 @app.route("/api/health")
 def health():
-    return {"status": "ok"}
+    import os
+    sheets_ok = bool(os.environ.get("GOOGLE_SHEET_ID") and os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip() not in ("", "service_account.json"))
+    return {"status": "ok", "sheets_configured": sheets_ok}
 
 
 # ---------- Landing Page (Root Route) ----------
