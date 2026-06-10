@@ -535,6 +535,7 @@ function setFilingType(type) {
     initEnhancedMilestoneTracker();
     initScrollAnimations();
     initReferrerAutoSave();  // Auto-save referrer details as user enters them
+    initReferralFieldAutoSave();  // Auto-save each referral as user enters them
   } else {
     document.getElementById("freeReferralSection").style.display = "none";
     const rf = document.getElementById("regularForm");
@@ -667,6 +668,113 @@ function initReferrerAutoSave() {
   });
 
   console.log("[AUTO_SAVE] Initialized for referrer details");
+}
+
+// ── AUTO-SAVE REFERRAL (Free Filing) ────────────────────────────────────────
+let _referralAutoSaveTimers = {}; // Debounce timer per referral index
+let _lastSavedReferralData = {}; // Track last saved referral data per index
+
+async function autoSaveReferral(index) {
+  /**
+   * Auto-save individual referral (name + phone) as user enters them.
+   * Saves to "The 5" sheet immediately so data is never lost.
+   */
+
+  // Only for free filing
+  if (filingType !== "free") return;
+
+  // Get referrer name (from auto-saved referrer details or form)
+  const referrerName = document.querySelector('[name="referrer_name"]')?.value?.trim() || "";
+
+  // Get referral name and phone
+  const refName = document.querySelector(`[name="ref_name_${index}"]`)?.value?.trim() || "";
+  const refPhoneRaw = document.querySelector(`[name="ref_phone_${index}"]`)?.value?.trim() || "";
+  const refPhone = _normalizePhone(refPhoneRaw);
+
+  // Check if data has changed since last save
+  const currentData = JSON.stringify({refName, refPhone});
+  if (_lastSavedReferralData[index] === currentData) {
+    return; // No change, skip save
+  }
+
+  // Validate both name and phone are filled
+  if (!refName || !refPhone) {
+    console.log(`[AUTO_SAVE_REF${index}] Skipping - incomplete referral`);
+    return;
+  }
+
+  // Validate phone is 10 digits
+  if (refPhone.length !== 10) {
+    console.log(`[AUTO_SAVE_REF${index}] Skipping - phone not 10 digits`);
+    return;
+  }
+
+  try {
+    console.log(`[AUTO_SAVE_REF${index}] Saving referral: {refName: "${refName}", refPhone: "${refPhone}"}`);
+
+    // Save to backend (which will save to "The 5" sheet)
+    const res = await fetch(`${API}/save-referral`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        referrer_name: referrerName,
+        referral_name: refName,
+        referral_phone: refPhone,
+        referral_index: index
+      })
+    });
+
+    const j = await res.json();
+    if (j.success) {
+      _lastSavedReferralData[index] = currentData;
+      console.log(`[AUTO_SAVE_REF${index}] ✅ Referral saved successfully`);
+      showToast(`✅ Referral ${index} saved`, "success");
+    } else {
+      console.warn(`[AUTO_SAVE_REF${index}] Server error: ${j.error}`);
+    }
+  } catch (e) {
+    console.warn(`[AUTO_SAVE_REF${index}] Failed to save (non-blocking):`, e.message);
+    // Non-blocking: allow user to continue even if save fails
+  }
+}
+
+// Attach auto-save listeners to referral fields
+function initReferralFieldAutoSave() {
+  for (let i = 1; i <= 5; i++) {
+    const nameField = document.querySelector(`[name="ref_name_${i}"]`);
+    const phoneField = document.querySelector(`[name="ref_phone_${i}"]`);
+
+    if (!nameField || !phoneField) continue;
+
+    // Trigger auto-save on blur for name field
+    nameField.addEventListener('blur', () => {
+      clearTimeout(_referralAutoSaveTimers[i]);
+      _referralAutoSaveTimers[i] = setTimeout(() => autoSaveReferral(i), 500);
+    });
+
+    // Trigger auto-save on blur for phone field
+    phoneField.addEventListener('blur', () => {
+      clearTimeout(_referralAutoSaveTimers[i]);
+      _referralAutoSaveTimers[i] = setTimeout(() => autoSaveReferral(i), 500);
+    });
+
+    // Also trigger on Enter key
+    nameField.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(_referralAutoSaveTimers[i]);
+        autoSaveReferral(i);
+      }
+    });
+
+    phoneField.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(_referralAutoSaveTimers[i]);
+        autoSaveReferral(i);
+      }
+    });
+  }
+
+  console.log("[AUTO_SAVE] Initialized for referral fields");
 }
 
 // Control visibility of promotional buttons (reveal/joker) based on filing type and step

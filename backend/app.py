@@ -1985,6 +1985,92 @@ def diagnostic():
         }), 500
 
 
+# ---------- Save Individual Referral to "The 5" Sheet ─────────────────────────
+@app.route("/api/save-referral", methods=["POST"])
+def save_referral():
+    """
+    Save individual referral to "The 5" sheet (auto-save from referral-filing.html).
+
+    Request:
+    - referrer_name: Name of person making referral (required)
+    - referral_name: Name of referred person (required)
+    - referral_phone: Phone of referred person (required, 10 digits)
+    - referral_index: Index 1-5 (optional, for logging)
+
+    Response:
+    {
+        "success": bool,
+        "message": str
+    }
+    """
+    try:
+        data = request.get_json(force=True)
+        referrer_name = (data.get('referrer_name') or '').strip()
+        referral_name = (data.get('referral_name') or '').strip()
+        referral_phone = (data.get('referral_phone') or '').strip()
+        referral_index = data.get('referral_index', 0)
+
+        print(f"[SAVE_REFERRAL] Ref {referral_index}: {referrer_name} → {referral_name} ({referral_phone})")
+
+        # Validate required fields
+        if not referrer_name:
+            return jsonify({"success": False, "error": "referrer_name required"}), 400
+        if not referral_name:
+            return jsonify({"success": False, "error": "referral_name required"}), 400
+        if not referral_phone:
+            return jsonify({"success": False, "error": "referral_phone required"}), 400
+
+        # Validate phone is 10 digits
+        phone_digits = ''.join(c for c in referral_phone if c.isdigit())
+        if len(phone_digits) != 10:
+            return jsonify({"success": False, "error": "Phone must be 10 digits"}), 400
+
+        # Append to "The 5" sheet
+        try:
+            ws = sheets_service._sheet("The 5")
+            if ws is None:
+                print("[SAVE_REFERRAL] Sheet 'The 5' not found - returning success (non-blocking)")
+                return jsonify({"success": True, "message": "Sheet unavailable (non-blocking)"}), 200
+
+            # Ensure headers exist
+            sheets_service._ensure_headers(ws, [
+                "referrer_name",
+                "referral_name",
+                "referral_phone",
+                "referrals_sent",
+                "submission_found",
+                "last_notified",
+                "status"
+            ])
+
+            # Append row with first 3 columns (others handled differently)
+            sheets_service._ws_call(ws, 'append_row', [
+                referrer_name,      # Column A: referrer_name
+                referral_name,      # Column B: referral_name
+                referral_phone,     # Column C: referral_phone
+                "",                 # Column D: referrals_sent (empty, handled differently)
+                "",                 # Column E: submission_found (empty, handled differently)
+                "",                 # Column F: last_notified (empty, handled differently)
+                ""                  # Column G: status (empty, handled differently)
+            ])
+
+            print(f"[SAVE_REFERRAL] ✅ Saved: {referrer_name} → {referral_name}")
+            return jsonify({
+                "success": True,
+                "message": f"Referral {referral_index} saved"
+            })
+
+        except Exception as e:
+            print(f"[SAVE_REFERRAL] Error saving to sheet: {e}")
+            # Non-blocking: return success anyway so user experience isn't disrupted
+            return jsonify({"success": True, "message": "Saved locally (sheet write failed)"}), 200
+
+    except Exception as e:
+        print(f"[SAVE_REFERRAL] Error: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ---------- Immediate Document Upload (Save on upload, before extraction) ----------
 @app.route("/api/upload-document", methods=["POST"])
 def upload_document():

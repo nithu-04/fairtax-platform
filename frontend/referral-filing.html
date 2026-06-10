@@ -526,8 +526,9 @@
       var ftHidden = document.querySelector('[name="filing_type"]');
       if (ftHidden) ftHidden.value = "free";
 
-      // Initialize auto-save for referrer details
+      // Initialize auto-save for referrer details and referral fields
       initReferrerAutoSave();
+      initReferralFieldAutoSave();
 
       /* ── Hide progress bar (single-step page, no stepper needed) ── */
       (function() {
