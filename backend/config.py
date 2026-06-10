@@ -13,6 +13,10 @@ class Config:
     GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
     SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
 
+    # Google Cloud Storage
+    GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "fairtax-uploads")
+    GCS_PROJECT_ID = os.getenv("GCS_PROJECT_ID", "")
+
     WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
     WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "")
     WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v18.0")

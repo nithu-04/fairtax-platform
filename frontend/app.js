@@ -1,4 +1,4 @@
-﻿const API = 'https://fairtax-backend.onrender.com/api'; // TEMP: always live backend for testing
+﻿const API = 'https://fairtax-backend.onrender.com/api'; // PRODUCTION: Render backend
 
 let currentStep = 1;
 const TOTAL = 7;
@@ -534,6 +534,7 @@ function setFilingType(type) {
     showReferralTeaser();
     initEnhancedMilestoneTracker();
     initScrollAnimations();
+    initReferrerAutoSave();  // Auto-save referrer details as user enters them
   } else {
     document.getElementById("freeReferralSection").style.display = "none";
     const rf = document.getElementById("regularForm");
@@ -559,6 +560,113 @@ function setFilingType(type) {
   } catch (e) {
     /* ignore */
   }
+}
+
+// ── AUTO-SAVE REFERRER DETAILS (Free Filing) ──────────────────────────────────
+let _autoSaveTimer = null;
+let _lastSavedReferrerData = null;
+
+async function autoSaveReferrerDetails() {
+  /**
+   * Auto-save referrer details (name, phone, email, PAN, city) as user enters them.
+   * This ensures data is saved BEFORE "Reveal Code" click, so code generation works reliably.
+   */
+
+  // Only for free filing
+  if (filingType !== "free") return;
+
+  // Collect current referrer details
+  const refName = document.querySelector('[name="referrer_name"]')?.value?.trim() || "";
+  const refPhoneRaw = document.querySelector('[name="referrer_phone"]')?.value?.trim() || "";
+  const refEmail = document.querySelector('[name="email"]')?.value?.trim() || "";
+  const refPan = document.querySelector('[name="pan"]')?.value?.trim() || "";
+  const cityType = document.querySelector('[name="city_type"]')?.value || "";
+
+  const refPhone = _normalizePhone(refPhoneRaw);
+
+  // Check if data has changed since last save
+  const currentData = JSON.stringify({refName, refPhone, refEmail, refPan, cityType});
+  if (_lastSavedReferrerData === currentData) {
+    return; // No change, skip save
+  }
+
+  // Validate minimum fields before saving
+  if (!refName || !refPhone || !refEmail || !refPan || !cityType) {
+    console.log("[AUTO_SAVE] Skipping - incomplete referrer details");
+    return;
+  }
+
+  // Validate email format
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRe.test(refEmail)) {
+    console.log("[AUTO_SAVE] Skipping - invalid email");
+    return;
+  }
+
+  // Validate phone is 10 digits
+  if (refPhone.length !== 10) {
+    console.log("[AUTO_SAVE] Skipping - phone not 10 digits");
+    return;
+  }
+
+  try {
+    console.log("[AUTO_SAVE] Saving referrer details:", {refName, refPhone, refEmail, refPan, cityType});
+
+    // Save to Google Sheets
+    await savePhase({
+      filing_category: "free",
+      name: refName,
+      phone: refPhone,
+      email: refEmail,
+      pan: refPan,
+      city_type: cityType,
+    });
+
+    _lastSavedReferrerData = currentData;
+    console.log("[AUTO_SAVE] ✅ Referrer details saved successfully");
+
+    // Show brief success indicator
+    showToast("✅ Your details saved", "success");
+
+  } catch (e) {
+    console.warn("[AUTO_SAVE] Failed to save (non-blocking):", e.message);
+    // Non-blocking: allow user to continue even if save fails
+  }
+}
+
+// Attach auto-save listeners to referrer detail fields
+function initReferrerAutoSave() {
+  const fields = [
+    'referrer_name',
+    'referrer_phone',
+    'email',
+    'pan',
+    'city_type'
+  ];
+
+  fields.forEach(fieldName => {
+    const field = document.querySelector(`[name="${fieldName}"]`);
+    if (!field) return;
+
+    // Trigger auto-save on blur (after user leaves field)
+    field.addEventListener('blur', () => {
+      // Debounce: cancel pending save, schedule new one
+      clearTimeout(_autoSaveTimer);
+      _autoSaveTimer = setTimeout(autoSaveReferrerDetails, 500);
+    });
+
+    // Also trigger on Enter key
+    if (field.tagName === 'INPUT') {
+      field.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          clearTimeout(_autoSaveTimer);
+          autoSaveReferrerDetails();
+        }
+      });
+    }
+  });
+
+  console.log("[AUTO_SAVE] Initialized for referrer details");
 }
 
 // Control visibility of promotional buttons (reveal/joker) based on filing type and step
@@ -730,12 +838,9 @@ async function revealReferralCode() {
   }
 
   // Step 5: Generate referral code
-  const namePrefix = refName
-    .substring(0, 3)
-    .toUpperCase()
-    .replace(/[^A-Z]/g, "X");
-  const randomSuffix = Math.random().toString(36).substr(2, 5).toUpperCase();
-  const code = namePrefix + "_" + randomSuffix;
+  const namePart = refName.toLowerCase();
+  const randomNumbers = Math.floor(Math.random() * 100).toString().padStart(2, '0');
+  const code = namePart + "_FAIRTAX" + randomNumbers;
 
   referralCode = code;
   localStorage.setItem("referral_code", code);
@@ -1788,6 +1893,10 @@ async function extractSectionBg(inputId, docType, statusId) {
 
   if (_step3Controllers[inputId]) _step3Controllers[inputId].abort();
   const controller = new AbortController();
+
+  // STEP 1: Immediately upload/save documents (before extraction)
+  // This ensures documents are saved even if extraction fails or user cancels
+  await uploadDocumentImmediately(inputId, docType, statusId);
   _step3Controllers[inputId] = controller;
 
   const statusEl = document.getElementById(statusId);
@@ -1829,6 +1938,34 @@ async function extractSectionBg(inputId, docType, statusId) {
   }
 }
 
+// ── IMMEDIATE DOCUMENT UPLOAD (Save on file selection, silent) ──────────────────────
+async function uploadDocumentImmediately(inputId, docType, statusId) {
+  const input = document.getElementById(inputId);
+  if (!input || !input.files.length) return;
+
+  const fd = new FormData();
+  [...input.files].forEach((f) => fd.append("documents", f));
+  fd.append("doc_type", docType);
+  fd.append("submission_id", submissionId);
+
+  try {
+    console.log(`[UPLOAD] Saving ${input.files.length} file(s) for ${docType} in background`);
+    const r = await fetch(`${API}/upload-document`, { method: "POST", body: fd });
+    const j = await r.json();
+
+    if (j.success) {
+      console.log(`[UPLOAD] Documents saved: ${j.urls.join(", ")}`);
+      return true;
+    } else {
+      console.warn(`[UPLOAD] Could not save: ${j.error}. Extraction will proceed.`);
+      return false;
+    }
+  } catch (err) {
+    console.error(`[UPLOAD] Background save failed: ${err.message}. Extraction will proceed.`);
+    return false;
+  }
+}
+
 // ── INLINE DOCUMENT EXTRACTION ───────────────────────────────────────────
 async function extractSection(inputId, docType, statusId) {
   const input = document.getElementById(inputId);
@@ -1845,6 +1982,9 @@ async function extractSection(inputId, docType, statusId) {
     statusEl.className = "status loading";
     statusEl.textContent = "🔍 AI reading document...";
   }
+
+  // STEP 1: Immediately upload/save documents in background (non-blocking)
+  uploadDocumentImmediately(inputId, docType, statusId);
 
   const fd = new FormData();
   [...input.files].forEach((f) => fd.append("file", f));

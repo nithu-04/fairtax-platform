@@ -217,6 +217,7 @@
               <label
                 >Your Name
                 <input
+                  id="referrer_name"
                   name="referrer_name"
                   placeholder="Your full name"
                   required
@@ -224,6 +225,7 @@
               <label
                 >Your Phone
                 <input
+                  id="referrer_phone"
                   name="referrer_phone"
                   placeholder="Your phone"
                   pattern="\d{10}"
@@ -232,6 +234,7 @@
               <label
                 >Your Email
                 <input
+                  id="email"
                   name="email"
                   placeholder="Your email"
                   type="email"
@@ -240,6 +243,7 @@
               <label
                 >Your PAN
                 <input
+                  id="pan"
                   name="pan"
                   placeholder="PAN (e.g., ABCDE1234F)"
                   pattern="[A-Z]{5}[0-9]{4}[A-Z]"
@@ -248,7 +252,7 @@
               /></label>
               <label style="grid-column: 1 / -1"
                 >City Type (for HRA calculation)
-                <select name="city_type" required>
+                <select id="city_type" name="city_type" required>
                   <option value="">-- Select City Type --</option>
                   <option value="metro">Metro</option>
                   <option value="non-metro">Non-Metro</option>
@@ -264,51 +268,56 @@
             <div id="referralsList">
               <div class="grid" id="refInputs">
                 <label
-                  >Ref 1 Name <input name="ref_name_1" placeholder="Name"
+                  >Ref 1 Name <input id="ref_name_1" name="ref_name_1" placeholder="Name"
                 /></label>
                 <label
                   >Ref 1 Phone
                   <input
+                    id="ref_phone_1"
                     name="ref_phone_1"
                     placeholder="Phone"
                     pattern="\d{10}"
                 /></label>
                 <label
-                  >Ref 2 Name <input name="ref_name_2" placeholder="Name"
+                  >Ref 2 Name <input id="ref_name_2" name="ref_name_2" placeholder="Name"
                 /></label>
                 <label
                   >Ref 2 Phone
                   <input
+                    id="ref_phone_2"
                     name="ref_phone_2"
                     placeholder="Phone"
                     pattern="\d{10}"
                 /></label>
                 <label
-                  >Ref 3 Name <input name="ref_name_3" placeholder="Name"
+                  >Ref 3 Name <input id="ref_name_3" name="ref_name_3" placeholder="Name"
                 /></label>
                 <label
                   >Ref 3 Phone
                   <input
+                    id="ref_phone_3"
                     name="ref_phone_3"
                     placeholder="Phone"
                     pattern="\d{10}"
                 /></label>
                 <label
-                  >Ref 4 Name <input name="ref_name_4" placeholder="Name"
+                  >Ref 4 Name <input id="ref_name_4" name="ref_name_4" placeholder="Name"
                 /></label>
                 <label
                   >Ref 4 Phone
                   <input
+                    id="ref_phone_4"
                     name="ref_phone_4"
                     placeholder="Phone"
                     pattern="\d{10}"
                 /></label>
                 <label
-                  >Ref 5 Name <input name="ref_name_5" placeholder="Name"
+                  >Ref 5 Name <input id="ref_name_5" name="ref_name_5" placeholder="Name"
                 /></label>
                 <label
                   >Ref 5 Phone
                   <input
+                    id="ref_phone_5"
                     name="ref_phone_5"
                     placeholder="Phone"
                     pattern="\d{10}"
@@ -516,6 +525,9 @@
       filingType = "free";
       var ftHidden = document.querySelector('[name="filing_type"]');
       if (ftHidden) ftHidden.value = "free";
+
+      // Initialize auto-save for referrer details
+      initReferrerAutoSave();
 
       /* ── Hide progress bar (single-step page, no stepper needed) ── */
       (function() {
