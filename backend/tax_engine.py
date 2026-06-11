@@ -209,8 +209,11 @@ def calculate(payload):
         150000
     )
     sec_80ccd_1b = min(g("nps_self"), 50000)
-    sec_80ccd_2_old = min(g("nps_employer"), 0.10 * basic)
-    sec_80ccd_2_new = min(g("nps_employer"), 0.14 * basic)
+    # 80CCD(2) employer NPS: Use value from Form 16 without re-capping
+    # (cap of 10%/14% is INPUT validation, not computation rule per spec)
+    sec_80ccd_2 = g("nps_employer")  # Deductible in BOTH regimes
+    sec_80ccd_2_old = sec_80ccd_2
+    sec_80ccd_2_new = sec_80ccd_2
 
     parents_senior = str(payload.get("parents_senior", "")).lower() in ("1", "true", "yes")
     sec_80d = min(g("medical_self"), 25000) + min(
