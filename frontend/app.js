@@ -1420,20 +1420,10 @@ $("#submit").onclick = async () => {
 
       $("#refCode").textContent = refCode;
 
-      // Calculate and display refund options using actual backend-calculated values
-      const amounts = calculateRefundAmounts({
-        refund_old_a: j.refund_old_a,
-        refund_old_b: j.refund_old_b,
-        refund_old_c: j.refund_old_c,
-      });
-      // Store for later use in selectRefundOption
-      refundAmounts = amounts;
-      document.getElementById("optionA-amount").textContent =
-        amounts.A.toLocaleString("en-IN");
-      document.getElementById("optionB-amount").textContent =
-        amounts.B.toLocaleString("en-IN");
-      document.getElementById("optionC-amount").textContent =
-        amounts.C.toLocaleString("en-IN");
+      // NOTE: Refund amounts are NOT displayed to users in web UI
+      // They are only stored in backend, sheets, and PDF (via WhatsApp)
+      // Users see "Congratulations" on submit, then "Quote Approved!" after approval
+      // The 6 quote options appear only in PDF, never in web UI
 
       currentStep = 7;
       showStep(7);
