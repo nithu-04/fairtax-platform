@@ -130,6 +130,57 @@ def get_doc_type_column(doc_type):
     return col_map.get(doc_type, "doc_form16_urls")
 
 
+def save_pdf_to_gcs(pdf_content, submission_id, filename="quote.pdf"):
+    """Upload PDF bytes to GCS and return signed URL.
+
+    Args:
+        pdf_content: PDF file bytes
+        submission_id: Unique identifier
+        filename: Name of the PDF file
+
+    Returns:
+        str: Signed GCS URL or local URL, or None if failed
+    """
+    print(f"[STORAGE] [PDF] Uploading {filename} for {submission_id}")
+
+    if STORAGE_MODE == "GCS":
+        try:
+            from datetime import datetime, timedelta
+            blob_path = f"quotes/{submission_id}/{filename}"
+            blob = GCS_BUCKET.blob(blob_path)
+            blob.upload_from_string(
+                pdf_content,
+                content_type="application/pdf"
+            )
+            # Generate signed URL valid for 30 days
+            url = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(days=30),
+                method="GET"
+            )
+            print(f"[STORAGE] [GCS] ✓ PDF saved: {url}")
+            return url
+        except Exception as e:
+            print(f"[STORAGE] [GCS] ✗ PDF upload failed: {e}")
+            return None
+    else:
+        # Fallback to local/Render disk
+        try:
+            submission_dir = os.path.join(STORAGE_BASE, str(submission_id or "anon"), "quotes")
+            os.makedirs(submission_dir, exist_ok=True)
+            fpath = os.path.join(submission_dir, filename)
+
+            with open(fpath, 'wb') as f:
+                f.write(pdf_content)
+
+            url = f"{Config.PUBLIC_BASE_URL}/api/download-quote/{submission_id}/{filename}"
+            print(f"[STORAGE] [{STORAGE_MODE}] ✓ PDF saved: {url}")
+            return url
+        except Exception as e:
+            print(f"[STORAGE] [PDF] ✗ Failed to save: {e}")
+            return None
+
+
 def append_urls_to_sheet(existing_urls_str, new_urls):
     """Append new URLs to existing URLs in a sheet column.
 

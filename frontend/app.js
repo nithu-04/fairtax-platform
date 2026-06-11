@@ -1636,17 +1636,15 @@ $("#checkQuote").onclick = async () => {
       return;
     }
 
-    // For privacy and security the full quote PDF and plan details are only shared via WhatsApp.
+    // Display quote approved message with password
     const quoteMsg = encodeURIComponent(
       `Hi FairTax Team,\n\nPlease share my quote for submission ID: ${submissionId}\n\nThank you!`,
     );
-    const pdfUrl = j.pdf_url || "";
-    const pdfLink = pdfUrl ? `\n\nQuote PDF: ${pdfUrl}` : "";
 
     out.innerHTML = `
       <div style="background:#eef2ff;border:2px solid #6366f1;border-radius:12px;padding:18px;text-align:center">
-        <div style="font-size:18px;font-weight:800;color:#3730a3;margin-bottom:8px">✅ Quote Sent on WhatsApp</div>
-        <div style="color:#374151;margin-bottom:10px">For confidentiality, your detailed quote and plan options have been sent to your WhatsApp number. Please check WhatsApp to view and download the secured report.</div>
+        <div style="font-size:18px;font-weight:800;color:#3730a3;margin-bottom:8px">✅ Quote Approved!</div>
+        <div style="color:#374151;margin-bottom:10px">Your detailed quote and filing plan options have been sent to your WhatsApp number. <strong>Please check your WhatsApp messages to view and download the secured report.</strong></div>
         ${
           j.pdf_password
             ? `
@@ -1656,18 +1654,7 @@ $("#checkQuote").onclick = async () => {
         </div>`
             : ""
         }
-        ${
-          pdfUrl
-            ? `
-        <div style="margin-top:12px;padding:12px;background:#fff;border-radius:8px;text-align:left">
-          <div style="font-size:12px;color:#6b7280;margin-bottom:8px">Your Quote PDF:</div>
-          <a href="${pdfUrl}" target="_blank" style="color:#2563eb;text-decoration:underline;font-weight:600;word-break:break-all">
-            ${pdfUrl.substring(pdfUrl.lastIndexOf("/") + 1)}
-          </a>
-        </div>`
-            : ""
-        }
-        <div style="margin-top:8px">
+        <div style="margin-top:12px">
           <a class="payment-wa-btn" href="https://wa.me/917397510254?text=${quoteMsg}" target="_blank" rel="noopener">📱 Contact Support on WhatsApp</a>
         </div>
         <p style="font-size:12px;color:#6b7280;margin-top:12px">You can also track filing progress on the <a href="status.html?id=${submissionId}" style="color:#2563eb">Status page</a>.</p>

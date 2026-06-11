@@ -91,12 +91,35 @@ def _banner(rows, bg, col_w='100%'):
     return t
 
 
-def generate_quote_pdf(data, filename="quote.pdf", password=None):
+def generate_quote_pdf(data, filename="quote.pdf", password=None, return_bytes=False):
+    """Generate quote PDF.
+
+    Args:
+        data: Quote data dictionary
+        filename: Filename (used if return_bytes=False)
+        password: PDF password
+        return_bytes: If True, return PDF bytes instead of saving to file
+
+    Returns:
+        bytes if return_bytes=True, else filename (str)
+    """
+    from io import BytesIO
+
     st = _styles()
-    doc = SimpleDocTemplate(
-        filename, pagesize=A4,
-        leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28
-    )
+
+    # Use BytesIO for in-memory PDF generation if returning bytes
+    if return_bytes:
+        pdf_buffer = BytesIO()
+        doc = SimpleDocTemplate(
+            pdf_buffer, pagesize=A4,
+            leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28
+        )
+    else:
+        doc = SimpleDocTemplate(
+            filename, pagesize=A4,
+            leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=28
+        )
+
     content = []
     P = lambda txt, s='normal': Paragraph(txt, st[s])
     sp = lambda h=8: Spacer(1, h)
@@ -281,26 +304,40 @@ def generate_quote_pdf(data, filename="quote.pdf", password=None):
     ))
 
     doc.build(content)
-    # If a password is provided, encrypt the generated PDF using PyPDF2.
+
+    # Handle password encryption if provided
     if password:
         try:
             from PyPDF2 import PdfReader, PdfWriter
 
-            reader = PdfReader(filename)
+            if return_bytes:
+                # Read from BytesIO
+                pdf_buffer.seek(0)
+                reader = PdfReader(pdf_buffer)
+            else:
+                reader = PdfReader(filename)
+
             writer = PdfWriter()
             for p in reader.pages:
                 writer.add_page(p)
 
             try:
-                # PyPDF2 >= 3: encrypt(user_password, owner_password=None)
                 writer.encrypt(password)
             except TypeError:
-                # Fallback for older signatures
                 writer.encrypt(user_pwd=password)
 
-            with open(filename, "wb") as outf:
-                writer.write(outf)
+            if return_bytes:
+                encrypted_buffer = BytesIO()
+                writer.write(encrypted_buffer)
+                return encrypted_buffer.getvalue()
+            else:
+                with open(filename, "wb") as outf:
+                    writer.write(outf)
         except Exception as e:
-            print("PDF encryption failed:", e)
+            print(f"PDF encryption failed: {e}")
 
-    return filename
+    if return_bytes:
+        pdf_buffer.seek(0)
+        return pdf_buffer.getvalue()
+    else:
+        return filename

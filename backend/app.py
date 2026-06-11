@@ -1117,9 +1117,149 @@ def submit():
             return {"success": False, "error": error_msg}, 500
 
 
+# ========== QUOTE GENERATION HELPER ==========
+
+def _generate_and_upload_quote(submission_id, rec=None):
+    """Generate quote PDF and upload to GCS/storage, update sheet with URL.
+
+    Args:
+        submission_id: Submission ID
+        rec: Optional pre-fetched record dict
+
+    Returns:
+        tuple: (pdf_url, pdf_password) or (None, None) if failed
+    """
+    if not rec:
+        rec = sheets_service.check_approval(submission_id)
+    if not rec:
+        print(f"[QUOTE_GEN] Record not found for {submission_id}")
+        return None, None
+
+    if rec.get("approval_status") != "APPROVED":
+        print(f"[QUOTE_GEN] Not approved: {submission_id}")
+        return None, None
+
+    def f(k):
+        try:
+            return float(rec.get(k) or 0)
+        except:
+            return 0.0
+
+    def clean_regime(r):
+        r = str(r or "").strip()
+        return r if r and r not in ("0", "—") else "NEW"
+
+    try:
+        # Log key values being used in PDF
+        print(f"[QUOTE_GEN] ======== QUOTE GENERATION FOR {submission_id} ========")
+        print(f"[QUOTE_GEN] Client: {rec.get('name')} | PAN: {rec.get('pan')} | Phone: {rec.get('phone')}")
+        print(f"[QUOTE_GEN] Gross Salary: {f('gross_salary')} | Basic: {f('basic_salary')} | HRA: {f('hra_received')}")
+        print(f"[QUOTE_GEN] TDS Paid: {f('tds_paid')} | Home Loan Interest: {f('home_loan_interest')}")
+        print(f"[QUOTE_GEN] Deductions - 80C: {f('sec_80c')} | 80D: {f('sec_80d')} | 80CCD(1B): {f('sec_80ccd_1b')} | 80CCD(2): {f('sec_80ccd_2')}")
+        print(f"[QUOTE_GEN] Total Deductions: {f('deductions_total')}")
+
+        # Build plans with variant refunds
+        plans = [
+            {"id": "A", "label": "Plan A — Safe",
+             "desc": "Conservative deductions, exact figures as filed. Lowest risk.",
+             "refund": f("variant_a_refund"), "regime": clean_regime(rec.get("variant_a_regime"))},
+            {"id": "B", "label": "Plan B — Optimized",
+             "desc": "Optimised LTA & allowance claims for a higher refund.",
+             "refund": f("variant_b_refund"), "regime": "OLD"},
+            {"id": "C", "label": "Plan C — Maximum",
+             "desc": "Maximum legal deductions & allowances claimed.",
+             "refund": f("variant_c_refund"), "regime": "OLD"},
+        ]
+
+        print(f"[QUOTE_GEN] Plan A Refund: {f('variant_a_refund')} ({clean_regime(rec.get('variant_a_regime'))}) | Plan B: {f('variant_b_refund')} (OLD) | Plan C: {f('variant_c_refund')} (OLD)")
+
+        # Derive PDF password
+        pdf_password = None
+        try:
+            phone = rec.get("phone", "") if rec else ""
+            digits = "".join([c for c in str(phone) if c.isdigit()])
+            pdf_password = digits[-4:] if digits and len(digits) >= 4 else submission_id[-6:]
+        except Exception:
+            pdf_password = submission_id[-6:] if submission_id else None
+
+        # Generate PDF bytes
+        pdf_data = {**rec, "plans": plans}
+        pdf_bytes = generate_quote_pdf(pdf_data, password=pdf_password, return_bytes=True)
+
+        if not pdf_bytes:
+            print(f"[QUOTE_GEN] PDF generation failed for {submission_id}")
+            return None, None
+
+        print(f"[QUOTE_GEN] PDF generated ({len(pdf_bytes)} bytes) with password: {pdf_password}")
+
+        # Upload to storage (GCS or local)
+        filename = f"quote_{submission_id}.pdf"
+        pdf_url = storage_service.save_pdf_to_gcs(pdf_bytes, submission_id, filename)
+
+        if not pdf_url:
+            print(f"[QUOTE_GEN] Storage upload failed for {submission_id}")
+            return None, None
+
+        # Update sheet with PDF URL
+        try:
+            row = sheets_service.get_row_by_submission_id(submission_id)
+            if row:
+                sheets_service.update_row(row, {"quote_link": pdf_url})
+                print(f"[QUOTE_GEN] ✓ PDF generated, uploaded, and sheet updated for {submission_id}")
+                print(f"[QUOTE_GEN] PDF URL: {pdf_url}")
+                print(f"[QUOTE_GEN] ======== END QUOTE GENERATION ========")
+        except Exception as e:
+            print(f"[QUOTE_GEN] Warning: Could not update sheet: {e}")
+
+        return pdf_url, pdf_password
+
+    except Exception as e:
+        print(f"[QUOTE_GEN] Exception: {e}")
+        traceback.print_exc()
+        return None, None
+
+
+# ---------- Quote Generation Webhook ----------
+@app.route("/api/generate-quote", methods=["POST"])
+def generate_quote_webhook():
+    """Webhook endpoint called by Apps Script when approval_status changes to APPROVED.
+
+    Expected JSON:
+        {"submission_id": "xxx"}
+    """
+    try:
+        data = request.get_json(force=True)
+        submission_id = data.get("submission_id", "").strip()
+
+        if not submission_id:
+            return jsonify({"success": False, "error": "submission_id required"}), 400
+
+        print(f"[QUOTE_WEBHOOK] Received request for {submission_id}")
+
+        pdf_url, pdf_password = _generate_and_upload_quote(submission_id)
+
+        if pdf_url:
+            print(f"[QUOTE_WEBHOOK] ✓ Success for {submission_id}")
+            return jsonify({
+                "success": True,
+                "pdf_url": pdf_url,
+                "pdf_password": pdf_password,
+                "message": "Quote generated and uploaded successfully"
+            })
+        else:
+            print(f"[QUOTE_WEBHOOK] ✗ Failed for {submission_id}")
+            return jsonify({"success": False, "error": "Failed to generate quote"}), 500
+
+    except Exception as e:
+        print(f"[QUOTE_WEBHOOK] Exception: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ---------- Quote ----------
 @app.route("/api/quote/<submission_id>")
 def quote(submission_id):
+    """Retrieve pre-generated quote. PDF is generated automatically when auditor approves."""
     rec = sheets_service.check_approval(submission_id)
     if not rec:
         return jsonify({"success": False, "error": "Not found"}), 404
@@ -1152,40 +1292,25 @@ def quote(submission_id):
          "refund": f("variant_c_refund"), "regime": "OLD"},
     ]
 
-    filename = f"quote_{submission_id}.pdf"
+    # Retrieve pre-generated PDF URL from sheet
+    pdf_url = rec.get("quote_link", "")
     pdf_password = None
     try:
-        pdf_data = {**rec, "plans": plans}
-        # Derive PDF password: prefer last 4 digits of user's phone, fallback to submission_id tail
-        try:
-            phone = rec.get("phone", "") if rec else ""
-            digits = "".join([c for c in str(phone) if c.isdigit()])
-            if digits and len(digits) >= 4:
-                pdf_password = digits[-4:]
-            else:
-                pdf_password = submission_id[-6:] if submission_id else None
-        except Exception:
-            pdf_password = submission_id[-6:] if submission_id else None
-
-        generate_quote_pdf(pdf_data, filename, password=pdf_password)
-        print(f"[PDF] Generated successfully: {filename} with password: {pdf_password}")
-    except Exception as _pe:
-        print(f"[PDF] Generation error for {submission_id}: {_pe}")
-        traceback.print_exc()
-
-    pdf_url = f"{Config.PUBLIC_BASE_URL}/api/download/{filename}" if Config.PUBLIC_BASE_URL else ""
+        phone = rec.get("phone", "") if rec else ""
+        digits = "".join([c for c in str(phone) if c.isdigit()])
+        pdf_password = digits[-4:] if digits and len(digits) >= 4 else submission_id[-6:]
+    except Exception:
+        pdf_password = submission_id[-6:] if submission_id else None
 
     # Auto-send WhatsApp quote notification exactly once — only mark QUOTE_SENT if WA send succeeds
-    if not rec.get("filing_status"):
+    if not rec.get("filing_status") and pdf_url:
         resp = None
         wa_phone = whatsapp_service.normalize_phone(rec.get("phone", ""))
-        print(f"[QUOTE] Attempting WhatsApp send for {submission_id}: phone={wa_phone}, pdf_url={pdf_url}")
+        print(f"[QUOTE] Attempting WhatsApp send for {submission_id}: phone={wa_phone}")
         if wa_phone:
             best_refund = max(f("variant_a_refund"), f("variant_b_refund"), f("variant_c_refund"))
             try:
-                # The quote_ready template has a URL button that needs the filename
-                # (or unique part of the URL) as a dynamic parameter
-                print(f"[QUOTE] Sending WhatsApp template 'quote_ready' to {wa_phone} with refund: {best_refund}, pdf_url: {pdf_url}")
+                print(f"[QUOTE] Sending WhatsApp template 'quote_ready' to {wa_phone} with refund: {best_refund}")
                 resp = whatsapp_service.send_template(
                     wa_phone,
                     "quote_ready",
@@ -1193,7 +1318,6 @@ def quote(submission_id):
                     button_url_param=pdf_url,
                 )
                 print(f"[QUOTE] WhatsApp response: {resp}")
-                # Consider send successful if response is truthy and contains no 'error' key
                 success = bool(resp) and not (isinstance(resp, dict) and resp.get('error'))
             except Exception as _we:
                 print(f"[QUOTE] WhatsApp send exception for {submission_id}: {_we}")
@@ -1208,7 +1332,6 @@ def quote(submission_id):
             sheets_service.update_row(row, {"filing_status": "QUOTE_SENT"})
             print(f"[QUOTE] [OK] WhatsApp sent successfully and filing_status updated to QUOTE_SENT for {submission_id}")
 
-            # [OK] HOOK: Update referral status to "quote_generated"
             try:
                 user_phone = rec.get('phone')
                 if user_phone:
@@ -1219,6 +1342,7 @@ def quote(submission_id):
         else:
             print(f"[QUOTE] [ERROR] WhatsApp send failed or skipped for {submission_id}: {resp}")
 
+    # NOTE: PDF URL is NOT returned to frontend for security/privacy (already shared via WhatsApp)
     return jsonify({
         "success": True,
         "approved": True,
@@ -1228,8 +1352,6 @@ def quote(submission_id):
         "fee_upfront": fee_upfront,
         "fee_on_refund": round(fee - fee_upfront, 2),
         "plans": plans,
-        "pdf_url": pdf_url,
-        "pdf_password": pdf_password,
         "auditor_notes": rec.get("auditor_notes", ""),
         "filing_status": rec.get("filing_status", ""),
         "payment_status": rec.get("payment_status", ""),
