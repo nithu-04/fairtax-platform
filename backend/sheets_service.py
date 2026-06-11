@@ -72,6 +72,7 @@ HEADERS = [
     "variant_b_refund_new", "variant_c_refund_new",
 
     # Auditor workflow
+    "quote_link", "pdf_password",  # Quote PDF URL and password
     "approval_status", "auditor_quote_fee", "auditor_notes", "user_chosen_option",
     "payment_status", "filing_status",
 
@@ -727,11 +728,21 @@ def save_calculation_by_row(row, calc):
     set_cell("total_tax_old_c", extract_numeric(calc, "total_tax_old_c", "compatibility_summary.total_tax_old_c"))
     set_cell("refund_old_c", extract_numeric(calc, "refund_old_c", "compatibility_summary.refund_old_c"))
 
+    # NEW regime (B and C variants) — for 6-quote system
+    set_cell("taxable_new_b", extract_numeric(calc, "taxable_new_b", "compatibility_summary.taxable_new_b"))
+    set_cell("total_tax_new_b", extract_numeric(calc, "total_tax_new_b", "compatibility_summary.total_tax_new_b"))
+    set_cell("refund_new_b", extract_numeric(calc, "refund_new_b", "compatibility_summary.refund_new_b"))
+    set_cell("taxable_new_c", extract_numeric(calc, "taxable_new_c", "compatibility_summary.taxable_new_c"))
+    set_cell("total_tax_new_c", extract_numeric(calc, "total_tax_new_c", "compatibility_summary.total_tax_new_c"))
+    set_cell("refund_new_c", extract_numeric(calc, "refund_new_c", "compatibility_summary.refund_new_c"))
+
     # Variants — regime is a STRING ("OLD"/"NEW"), not numeric
     set_cell("variant_a_refund", extract_numeric(calc, "variant_options.variant_a.refund", "variant_a_refund", "compatibility_summary.variant_a_refund", "refund_old_a"))
     set_cell("variant_a_regime", extract_string(calc, "variant_options.variant_a.regime", "variant_a_regime", "compatibility_summary.variant_a_regime"))
     set_cell("variant_b_refund", extract_numeric(calc, "variant_options.variant_b.refund", "variant_b_refund", "compatibility_summary.variant_b_refund", "refund_old_b"))
     set_cell("variant_c_refund", extract_numeric(calc, "variant_options.variant_c.refund", "variant_c_refund", "compatibility_summary.variant_c_refund", "refund_old_c"))
+    set_cell("variant_b_refund_new", extract_numeric(calc, "variant_b_refund_new", "compatibility_summary.variant_b_refund_new", "refund_new_b"))
+    set_cell("variant_c_refund_new", extract_numeric(calc, "variant_c_refund_new", "compatibility_summary.variant_c_refund_new", "refund_new_c"))
 
     # Combined formulas (Regime Comparison + Quotes Comparison)
     set_cell("regime_comparison", f'="Old Regime: "&CF{row}&" | New Regime: "&BV{row}')
