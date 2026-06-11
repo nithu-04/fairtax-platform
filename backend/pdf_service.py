@@ -227,11 +227,18 @@ def generate_quote_pdf(data, filename="quote.pdf", password=None, return_bytes=F
     content.append(hr())
 
     plan_meta = {
-        'A': ('Plan A — Conservative', 'Exact figures as declared. Zero risk, fully compliant.'),
-        'B': ('Plan B — Optimised',    'Optimised LTA and allowance claims for higher refund.'),
-        'C': ('Plan C — Maximum',      'Maximum legal deductions and allowances claimed.'),
+        'A_OLD': ('Plan A (OLD) — Conservative', 'Exact figures as declared. Zero risk, fully compliant.'),
+        'B_OLD': ('Plan B (OLD) — Optimised',    'Optimised LTA and allowance claims for higher refund.'),
+        'C_OLD': ('Plan C (OLD) — Maximum',      'Maximum legal deductions and allowances claimed.'),
+        'A_NEW': ('Plan A (NEW) — Conservative', 'Exact figures as declared. Zero risk, fully compliant.'),
+        'B_NEW': ('Plan B (NEW) — Optimised',    'Optimised Section 10 allowances for higher refund.'),
+        'C_NEW': ('Plan C (NEW) — Maximum',      'Maximum legal deductions and allowances claimed.'),
     }
-    plan_colors = {'A': _BLUE, 'B': _PURPLE, 'C': _AMBER}
+    # Color coding: OLD regime uses blue/purple/amber, NEW regime uses green variants
+    plan_colors = {
+        'A_OLD': _BLUE, 'B_OLD': _PURPLE, 'C_OLD': _AMBER,
+        'A_NEW': _GREEN, 'B_NEW': HexColor('#10b981'), 'C_NEW': HexColor('#34d399')
+    }
 
     prows = [['Plan', 'Strategy', 'Regime', 'Estimated Refund']]
     for p in plans:

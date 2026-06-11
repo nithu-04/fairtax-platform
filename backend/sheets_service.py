@@ -65,8 +65,11 @@ HEADERS = [
     "taxable_old_a", "total_tax_old_a", "refund_old_a",
     "taxable_old_b", "total_tax_old_b", "refund_old_b",
     "taxable_old_c", "total_tax_old_c", "refund_old_c",
+    "taxable_new_b", "total_tax_new_b", "refund_new_b",
+    "taxable_new_c", "total_tax_new_c", "refund_new_c",
     "variant_a_refund", "variant_a_regime",
     "variant_b_refund", "variant_c_refund",
+    "variant_b_refund_new", "variant_c_refund_new",
 
     # Auditor workflow
     "approval_status", "auditor_quote_fee", "auditor_notes", "user_chosen_option",

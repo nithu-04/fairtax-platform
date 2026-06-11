@@ -158,8 +158,14 @@ def calculate_hra_exemption(basic, hra_received, monthly_rent, is_metro):
 
 # ================= VARIANT CONSTANTS =================
 
+# OLD REGIME VARIANTS (per FairTax_ITR_Engine_FY2025-26.csv rows 59-61)
 VARIANT_B = {"lta": 65000, "sec10_14_ii": 28000, "sec10_14_i": 98000, "sec_80d": 35000}
 VARIANT_C = {"lta": 95000, "sec10_14_ii": 34000, "sec10_14_i": 228000, "sec_80d": 35000}
+
+# NEW REGIME VARIANTS (per FairTax_ITR_Engine_FY2025-26.csv rows 63-65)
+# Note: NEW regime doesn't allow LTA or 80D deductions, only Sec10(14) items
+NEW_VARIANT_B = {"sec10_14_i": 95000}
+NEW_VARIANT_C = {"sec10_14_i": 195000, "sec10_14_ii": 45000}
 
 
 # ================= MAIN CALCULATION =================
@@ -256,14 +262,14 @@ def calculate(payload):
     refund_old_c = round(tds - tax_old_c, 2)
 
     # ===== THREE QUOTES: NEW REGIME =====
-    # Option B: NEW regime with extra exemptions (sec10_14_i only)
-    new_extra_b = VARIANT_B["sec10_14_i"]
+    # Option B: NEW regime with extra exemptions per NEW_VARIANT_B
+    new_extra_b = NEW_VARIANT_B["sec10_14_i"]
     ti_new_b = max(0, ti_new - new_extra_b)
     tax_new_b = _tax_new(ti_new_b)
     refund_new_b = round(tds - tax_new_b, 2)
 
-    # Option C: NEW regime with more extra exemptions
-    new_extra_c = VARIANT_C["sec10_14_i"] + VARIANT_C["sec10_14_ii"]
+    # Option C: NEW regime with more extra exemptions per NEW_VARIANT_C
+    new_extra_c = NEW_VARIANT_C["sec10_14_i"] + NEW_VARIANT_C.get("sec10_14_ii", 0)
     ti_new_c = max(0, ti_new - new_extra_c)
     tax_new_c = _tax_new(ti_new_c)
     refund_new_c = round(tds - tax_new_c, 2)
@@ -336,19 +342,23 @@ def calculate(payload):
         "taxable_old_b": round(ti_old_b, 2),
         "total_tax_old_b": tax_old_b,
         "refund_old_b": refund_old_b,
+        "variant_b_refund": refund_old_b,  # For sheet: variant_b_refund (OLD regime)
 
         # OLD REGIME OPTION C
         "taxable_old_c": round(ti_old_c, 2),
         "total_tax_old_c": tax_old_c,
         "refund_old_c": refund_old_c,
+        "variant_c_refund": refund_old_c,  # For sheet: variant_c_refund (OLD regime)
 
         # NEW REGIME OPTION B
         "taxable_new_b": round(ti_new_b, 2),
         "total_tax_new_b": tax_new_b,
         "refund_new_b": refund_new_b,
+        "variant_b_refund_new": refund_new_b,  # For sheet: variant_b_refund_new (NEW regime)
 
         # NEW REGIME OPTION C
         "taxable_new_c": round(ti_new_c, 2),
         "total_tax_new_c": tax_new_c,
         "refund_new_c": refund_new_c,
+        "variant_c_refund_new": refund_new_c,  # For sheet: variant_c_refund_new (NEW regime)
     }

@@ -1280,16 +1280,29 @@ def quote(submission_id):
         r = str(r or "").strip()
         return r if r and r not in ("0", "—") else "NEW"
 
+    # Build all 6 quotes: 3 for OLD regime, 3 for NEW regime
     plans = [
-        {"id": "A", "label": "Plan A — Safe",
-         "desc": "Conservative deductions, exact figures as filed. Lowest risk.",
-         "refund": f("variant_a_refund"), "regime": clean_regime(rec.get("variant_a_regime"))},
-        {"id": "B", "label": "Plan B — Optimized",
-         "desc": "Optimised LTA & allowance claims for a higher refund.",
+        # OLD REGIME QUOTES
+        {"id": "A_OLD", "label": "Plan A (OLD) — Conservative",
+         "desc": "Exact figures as filed. Lowest risk.",
+         "refund": f("refund_old_a"), "regime": "OLD"},
+        {"id": "B_OLD", "label": "Plan B (OLD) — Optimized",
+         "desc": "Optimised LTA & allowance claims for higher refund.",
          "refund": f("variant_b_refund"), "regime": "OLD"},
-        {"id": "C", "label": "Plan C — Maximum",
+        {"id": "C_OLD", "label": "Plan C (OLD) — Maximum",
          "desc": "Maximum legal deductions & allowances claimed.",
          "refund": f("variant_c_refund"), "regime": "OLD"},
+
+        # NEW REGIME QUOTES
+        {"id": "A_NEW", "label": "Plan A (NEW) — Conservative",
+         "desc": "Exact figures as filed. Lowest risk.",
+         "refund": f("refund_new"), "regime": "NEW"},
+        {"id": "B_NEW", "label": "Plan B (NEW) — Optimized",
+         "desc": "Optimised Section 10 allowance claims for higher refund.",
+         "refund": f("variant_b_refund_new"), "regime": "NEW"},
+        {"id": "C_NEW", "label": "Plan C (NEW) — Maximum",
+         "desc": "Maximum legal deductions & allowances claimed.",
+         "refund": f("variant_c_refund_new"), "regime": "NEW"},
     ]
 
     # Retrieve pre-generated PDF URL from sheet
