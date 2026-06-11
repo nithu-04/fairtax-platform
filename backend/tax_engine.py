@@ -1,11 +1,15 @@
 """
 FairTax — Tax engine for FY 2025-26 (AY 2026-27)
-Clean, single-source-of-truth implementation
+Implements correct formulas per FairTax_Calculation_Logic_FY2025-26.md
 """
+
+import tax_config
+from math import inf
 
 # ================= HELPERS =================
 
 def _num(x):
+    """Convert input to float, handling None, empty strings, and commas."""
     if x is None or x == "":
         return 0.0
     try:
@@ -13,65 +17,17 @@ def _num(x):
     except:
         return 0.0
 
-import tax_config
 
+# ================= SLAB COMPUTATIONS =================
 
-# ================= TAX SLABS =================
-
-def slab_tax_old(taxable):
-    """Compute old-regime tax (pre-cess) using centralized config.
-    Returns tax before cess (i.e., the value callers should multiply by
-    (1 + CESS_RATE) to get total tax).
+def _compute_slabs(taxable, regime):
+    """Compute tax by applying slab rates to taxable income.
+    Returns tax before rebate/surcharge/cess.
     """
-    return compute_tax_before_cess(taxable, 'OLD')
-
-
-def slab_tax_new(taxable):
-    """Compute new-regime tax (pre-cess) using centralized config."""
-    return compute_tax_before_cess(taxable, 'NEW')
-
-
-def compute_tax_before_cess(taxable, regime):
-    """Centralized tax computation (pre-cess) applying slabs and rebate.
-
-    - Uses tax_config.SLABS[regime]
-    - Applies rebate as per tax_config.REBATE[regime] (if present)
-    - Applies a marginal-relief style cap consistent with prior behavior
-      (keeps legacy marginal relief calculation to avoid surprise changes).
-    """
-    try:
-        slabs = tax_config.SLABS.get(regime)
-    except Exception:
-        slabs = None
-
-    if not slabs:
-        return 0.0
-
-    raw = _compute_slabs(taxable, slabs)
-
-    # Apply rebate if configured
-    rebate_cfg = tax_config.REBATE.get(regime, {}) if hasattr(tax_config, 'REBATE') else {}
-    threshold = rebate_cfg.get('threshold')
-    cap = rebate_cfg.get('cap', 0)
-
-    tax = raw
-    if threshold is not None and taxable <= threshold:
-        tax = 0.0  # FIXED: Section 87A rebate eliminates tax completely, not subtract cap
-    elif threshold is not None:
-        # Legacy marginal relief behaviour preserved: ensure tax not exceed
-        # taxable - threshold. This mimics existing logic in older engine.
-        if tax > (taxable - threshold):
-            tax = taxable - threshold
-
-    return float(tax)
-
-
-def _compute_slabs(taxable, slabs):
-    """Compute tax by slab rates without applying rebates or marginal relief.
-    This helper is used to expose intermediate values for debugging/clarity.
-    """
+    slabs = tax_config.SLABS.get(regime, [])
     tax = 0.0
     remaining = float(taxable)
+
     for limit, rate in slabs:
         chunk = min(remaining, limit)
         tax += chunk * rate
@@ -81,349 +37,318 @@ def _compute_slabs(taxable, slabs):
     return tax
 
 
-def _apply_surcharge_and_cess(tax_before_cess, total_income):
-    """Apply surcharge (based on tax_config.SURCHARGE_BANDS) and cess.
+def _apply_rebate(tax_before_rebate, taxable_income, regime):
+    """Apply Section 87A rebate based on regime and taxable income.
 
-    Returns a dict with keys: surcharge_rate, surcharge_amount,
-    tax_after_surcharge, cess_amount, total_tax
+    OLD: if TI ≤ 5L → rebate = min(tax, 12500), tax becomes 0 if TI ≤ 5L
+    NEW: if TI ≤ 12L → tax becomes 0; if TI > 12L, marginal relief applies
     """
-    try:
-        rate = 0.0
-        for th, r in tax_config.SURCHARGE_BANDS:
-            try:
-                if total_income >= th:  # FIXED: Changed > to >= (taxpayers at exact threshold should get surcharge)
-                    rate = r
-            except Exception:
-                continue
-    except Exception:
-        rate = 0.0
+    rebate_cfg = tax_config.REBATE.get(regime, {})
+    threshold = rebate_cfg.get('threshold', 0)
+    cap = rebate_cfg.get('cap', 0)
 
-    surcharge_amount = round(tax_before_cess * rate, 2)
-    tax_after_surcharge = tax_before_cess + surcharge_amount
-    cess_amount = round(tax_after_surcharge * tax_config.CESS_RATE, 2)
-    total_tax = round(tax_after_surcharge + cess_amount, 2)
+    if taxable_income <= threshold:
+        # Complete exemption up to threshold
+        return 0.0, min(tax_before_rebate, cap)
+
+    # For NEW regime above 12L, apply marginal relief
+    if regime == 'NEW' and taxable_income > 1200000:
+        capped_tax = max(0, taxable_income - 1200000)
+        return min(tax_before_rebate, capped_tax), 0.0
+
+    return tax_before_rebate, 0.0
+
+
+def _apply_surcharge_and_cess(tax_after_rebate, taxable_income, regime):
+    """Apply surcharge (with marginal relief) and 4% cess.
+
+    Surcharge based on taxable income thresholds:
+    - OLD/NEW: 50L→10%, 1Cr→15%, 2Cr→25%, 5Cr→37% (old) / 25% (new, capped)
+    """
+    # Surcharge bands: (threshold, rate)
+    surcharge_bands_old = [
+        (5000000, 0.10),    # 50L onwards: 10%
+        (10000000, 0.15),   # 1Cr onwards: 15%
+        (20000000, 0.25),   # 2Cr onwards: 25%
+        (50000000, 0.37),   # 5Cr onwards: 37%
+    ]
+
+    surcharge_bands_new = [
+        (5000000, 0.10),    # 50L onwards: 10%
+        (10000000, 0.15),   # 1Cr onwards: 15%
+        (20000000, 0.25),   # 2Cr onwards: 25%
+        (50000000, 0.25),   # 5Cr onwards: 25% (capped, not 37%)
+    ]
+
+    bands = surcharge_bands_old if regime == 'OLD' else surcharge_bands_new
+
+    # Find applicable surcharge rate
+    surcharge_rate = 0.0
+    for threshold, rate in bands:
+        if taxable_income >= threshold:
+            surcharge_rate = rate
+
+    surcharge_raw = tax_after_rebate * surcharge_rate
+
+    # Marginal relief: surcharge should not exceed income above threshold
+    if surcharge_rate > 0:
+        # Find which threshold applies
+        threshold_for_relief = 0
+        for threshold, rate in bands:
+            if taxable_income >= threshold and rate == surcharge_rate:
+                threshold_for_relief = threshold
+
+        # Tax at threshold (without rebate, as per markdown)
+        tax_at_threshold = _compute_slabs(threshold_for_relief, regime)
+        max_total = tax_at_threshold + (taxable_income - threshold_for_relief)
+        surcharge = max(0, min(surcharge_raw, max_total - tax_after_rebate))
+    else:
+        surcharge = 0.0
+
+    tax_after_surcharge = tax_after_rebate + surcharge
+
+    # Add 4% cess on (tax_after_rebate + surcharge)
+    cess = round(tax_after_surcharge * tax_config.CESS_RATE, 2)
+    total_tax = round(tax_after_surcharge + cess, 2)
 
     return {
-        'surcharge_rate': rate,
-        'surcharge_amount': surcharge_amount,
+        'surcharge_rate': surcharge_rate,
+        'surcharge_amount': round(surcharge, 2),
         'tax_after_surcharge': round(tax_after_surcharge, 2),
-        'cess_amount': cess_amount,
+        'cess_amount': cess,
         'total_tax': total_tax,
     }
 
 
-# ================= HRA =================
+def _tax_old(taxable_income):
+    """Compute OLD regime total tax (slab → rebate → surcharge → cess)."""
+    slab = _compute_slabs(taxable_income, 'OLD')
+    tax_after_rebate, _ = _apply_rebate(slab, taxable_income, 'OLD')
+    result = _apply_surcharge_and_cess(tax_after_rebate, taxable_income, 'OLD')
+    return result['total_tax']
 
-def calculate_hra_exemption(basic, hra_received, rent_paid, is_metro):
+
+def _tax_new(taxable_income):
+    """Compute NEW regime total tax (slab → rebate → surcharge → cess)."""
+    slab = _compute_slabs(taxable_income, 'NEW')
+    tax_after_rebate, _ = _apply_rebate(slab, taxable_income, 'NEW')
+    result = _apply_surcharge_and_cess(tax_after_rebate, taxable_income, 'NEW')
+    return result['total_tax']
+
+
+# ================= HRA EXEMPTION =================
+
+def calculate_hra_exemption(basic, hra_received, monthly_rent, is_metro):
+    """Calculate HRA exemption = MIN(HRA_RX, Rent*12 - 10%*Basic, 50/40%*Basic).
+    Floored at 0 (per markdown: if rent-10%basic is negative, use 0).
+    """
     basic = _num(basic)
     hra_received = _num(hra_received)
-    rent_paid = _num(rent_paid)
+    rent_annual = _num(monthly_rent) * 12
 
     percent = 0.5 if is_metro else 0.4
 
-    # If rent is provided and exceeds 10% of basic, use full formula
-    if rent_paid > 0.10 * basic:
-        return max(
-            0,
-            min(
-                hra_received,
-                percent * basic,
-                rent_paid - 0.10 * basic
-            )
-        )
-    else:
-        # If rent NOT provided (or too low), use percentage-based limit only
-        # Per Rule 8: minimum of actual HRA and percentage of salary
-        return min(hra_received, percent * basic)
+    # Three conditions
+    cond1 = hra_received
+    cond2 = max(0, rent_annual - 0.10 * basic)  # Floor at 0 per markdown
+    cond3 = percent * basic
+
+    return max(0, min(cond1, cond2, cond3))
 
 
 # ================= VARIANT CONSTANTS =================
 
-VARIANT_B = {"lta": 65000, "sec10_14_ii": 28000, "sec10_14_i": 98000}
-VARIANT_C = {"lta": 95000, "sec10_14_ii": 76000, "sec10_14_i": 228000}
+VARIANT_B = {"lta": 65000, "sec10_14_ii": 28000, "sec10_14_i": 98000, "sec_80d": 35000}
+VARIANT_C = {"lta": 95000, "sec10_14_ii": 34000, "sec10_14_i": 228000, "sec_80d": 35000}
 
 
-# ================= CORE OLD REGIME =================
-
-def _compute_old_regime(
-    gross,
-    other_income,
-    sec10_total,
-    home_loan_interest,
-    std_deduction,
-    pt,
-    deductions_total,
-    tds
-):
-    gti = gross + other_income - sec10_total
-    taxable = max(0, gti - home_loan_interest - std_deduction - pt - deductions_total)
-
-    tax = slab_tax_old(taxable)
-    # Apply surcharge and cess based on TRUE total income (gti = before deductions)
-    s_info = _apply_surcharge_and_cess(tax, gti)
-    total_tax = s_info['total_tax']
-
-    refund = round(tds - total_tax, 2)
-
-    return {
-        "gti": round(gti, 2),
-        "taxable": round(taxable, 2),
-        "tax": round(tax, 2),
-        "surcharge_rate": s_info['surcharge_rate'],
-        "surcharge_amount": s_info['surcharge_amount'],
-        "tax_after_surcharge": s_info['tax_after_surcharge'],
-        "cess_amount": s_info['cess_amount'],
-        "total_tax": total_tax,
-        "refund": refund,
-    }
-
-
-# ================= MAIN FUNCTION =================
+# ================= MAIN CALCULATION =================
 
 def calculate(payload):
-    g = lambda k, d=0: _num(payload.get(k, d))
+    """Calculate tax and refund for OLD/NEW regimes + all three quote options."""
 
+    g = lambda k, d=0: _num(payload.get(k, d))
     is_metro = str(payload.get("city_type", "")).lower() == "metro"
 
-    # ===== BASIC INPUTS =====
+    # ===== INPUTS =====
     gross = g("gross_salary")
     basic = g("basic_salary")
     hra_received = g("hra_received")
-
-    # FIXED: Handle rent correctly — detect if it's already annual or monthly
-    # Priority: use monthly_rent if provided, fallback to rent_paid
-    monthly_rent = g("monthly_rent") or 0
-    rent_paid_field = g("rent_paid") or 0
-
-    # If rent_paid_field > 1 lakh, assume it's annual; otherwise multiply by 12
-    if rent_paid_field > 0 and monthly_rent == 0:
-        # Use rent_paid_field: if it looks like annual (>100k), use as-is; otherwise multiply by 12
-        if rent_paid_field > 100000:
-            rent_paid = rent_paid_field  # Already annual
-        else:
-            rent_paid = rent_paid_field * 12  # Multiply monthly by 12
-    else:
-        # Use monthly_rent and multiply by 12
-        rent_paid = monthly_rent * 12
-
-    tds = g("tds_paid") or g("tds_deducted")
-
-    # House property: 30% standard deduction under Section 24(a)
-    rental_annual = g("rental_income_monthly") * 12
-    rental_taxable = round(rental_annual * 0.70, 2) if rental_annual > 0 else 0
+    monthly_rent = g("monthly_rent")
 
     other_income = (
-        rental_taxable
-        + g("fno_pl")
-        + g("securities_income")
-        + g("business_income")
-        + g("other_income_misc")
+        g("other_income_misc")
         + g("fd_interest")
         + g("dividend")
         + g("refund_interest")
     )
 
-    # ===== HRA =====
-    hra_exempt = calculate_hra_exemption(
-        basic, hra_received, rent_paid, is_metro
-    )
+    tds = g("tds_paid") or g("tds_deducted")
 
-    # ===== SECTION 10 =====
-    lta = g("lta")
+    # ===== SECTION 10 EXEMPTIONS =====
+    hra_exempt = calculate_hra_exemption(basic, hra_received, monthly_rent, is_metro)
     sec10_14_i = g("car_lease_allowance")
     sec10_14_ii = g("uniform_allowance")
+    lta = g("lta")
 
-    home_loan_interest_raw = g("home_loan_interest")
-    home_loan_interest = min(home_loan_interest_raw, 200000)
+    sec10_total = hra_exempt + sec10_14_i + sec10_14_ii + lta
 
-    # ===== STANDARD =====
-    std_old = tax_config.STANDARD_DEDUCTION.get('OLD', 50000)
-    std_new = tax_config.STANDARD_DEDUCTION.get('NEW', 75000)
-    pt = g("professional_tax")
+    # ===== OTHER DEDUCTIONS =====
+    home_loan_interest = min(g("home_loan_interest"), 200000)
+    sec16 = g("professional_tax") + 50000  # Standard deduction 50K + PT
 
-    # ===== DEDUCTIONS =====
+    # ===== SECTION 80 DEDUCTIONS =====
     sec_80c = min(
-        g("pf_employee")
-        + g("ulip_lic")
-        + g("school_fees")
-        + g("home_loan_principal"),
-        150000,
+        g("pf_employee") + g("ulip_lic") + g("school_fees") + g("home_loan_principal"),
+        150000
     )
-
     sec_80ccd_1b = min(g("nps_self"), 50000)
-    sec_80ccd_2 = min(g("nps_employer"), 0.10 * basic)
+    sec_80ccd_2_old = min(g("nps_employer"), 0.10 * basic)
     sec_80ccd_2_new = min(g("nps_employer"), 0.14 * basic)
 
-    parents_senior = str(payload.get("parents_senior", "")).lower() in (
-        "1", "true", "yes"
-    )
-
+    parents_senior = str(payload.get("parents_senior", "")).lower() in ("1", "true", "yes")
     sec_80d = min(g("medical_self"), 25000) + min(
         g("medical_parents"),
-        50000 if parents_senior else 25000,
+        50000 if parents_senior else 25000
     )
 
-    # Additional deductions available from form/frontend
-    sec_80e = g("sec_80e")  # Education loan interest (no upper limit)
-    sec_80g = g("sec_80g")  # Donations (80G) - treated as a deduction here (AI may refine)
-    # 80TTA savings bank interest deduction (cap ₹10,000)
+    sec_80e = g("sec_80e")
+    sec_80g = g("sec_80g")
     savings_interest = min(g("savings_interest"), 10000)
-    # 80DB - Medical treatment of specified disease (cap ₹100,000)
     sec_80db = min(g("sec_80db", 0), 100000)
 
-    deductions_total = (
-        sec_80c + sec_80ccd_1b + sec_80ccd_2 + sec_80d + sec_80e + sec_80g + savings_interest + sec_80db
-    )
+    # Chapter VI-A deductions (80C, 80CCD(1B), 80D, 80E, 80G, 80TTA, 80DB)
+    # NOTE: 80CCD(2) employer NPS is deducted separately, NOT in CH6A
+    ch6a_old = sec_80c + sec_80ccd_1b + sec_80d + sec_80e + sec_80g + savings_interest + sec_80db
 
-    # ===== OLD REGIME (ACTUAL) =====
-    sec10_total = hra_exempt + lta + sec10_14_i + sec10_14_ii
+    # ===== TAXABLE INCOME =====
+    # GTI_OLD = GROSS + OTHER - SEC10_EXEMPT - HOME_LOAN - SEC16
+    gti_old = gross + other_income - sec10_total - home_loan_interest - sec16
 
-    old_a = _compute_old_regime(
-        gross,
-        other_income,
-        sec10_total,
-        home_loan_interest,
-        std_old,
-        pt,
-        deductions_total,
-        tds,
-    )
+    # TI_OLD = GTI_OLD - CH6A - EMP_NPS
+    ti_old = max(0, gti_old - ch6a_old - sec_80ccd_2_old)
 
-    # ===== NEW REGIME =====
-    gti_new = gross + other_income
+    # TI_NEW = GROSS + OTHER - 75000 - EMP_NPS
+    std_new = 75000
+    ti_new = max(0, gross + other_income - std_new - sec_80ccd_2_new)
 
-    taxable_new = max(0, gti_new - std_new - sec_80ccd_2_new)
+    # ===== TAX COMPUTATION: ACTUAL REGIMES =====
+    tax_old_actual = _tax_old(ti_old)
+    tax_new_actual = _tax_new(ti_new)
 
-    tax_new = slab_tax_new(taxable_new)
-    s_info_new = _apply_surcharge_and_cess(tax_new, gti_new)
-    total_tax_new = s_info_new['total_tax']
+    refund_old_actual = round(tds - tax_old_actual, 2)
+    refund_new_actual = round(tds - tax_new_actual, 2)
 
-    refund_new = round(tds - total_tax_new, 2)
+    # ===== OPTION A: BEST OF ACTUAL =====
+    option_a = max(refund_old_actual, refund_new_actual)
 
-    # ===== VARIANT A =====
-    variant_a_refund = max(old_a["refund"], refund_new)
-    variant_a_regime = "OLD" if old_a["refund"] >= refund_new else "NEW"
+    # ===== THREE QUOTES: OLD REGIME =====
+    # Option B: OLD regime with extra exemptions
+    old_extra_b = (VARIANT_B["sec10_14_i"] + VARIANT_B["sec10_14_ii"] + VARIANT_B["lta"] + VARIANT_B["sec_80d"])
+    ti_old_b = max(0, ti_old - old_extra_b)
+    tax_old_b = _tax_old(ti_old_b)
+    refund_old_b = round(tds - tax_old_b, 2)
 
-    # ===== VARIANT B =====
-    sec10_b = (
-        hra_exempt
-        + VARIANT_B["lta"]
-        + VARIANT_B["sec10_14_i"]
-        + VARIANT_B["sec10_14_ii"]
-    )
+    # Option C: OLD regime with more extra exemptions
+    old_extra_c = (VARIANT_C["sec10_14_i"] + VARIANT_C["sec10_14_ii"] + VARIANT_C["lta"] + VARIANT_C["sec_80d"])
+    ti_old_c = max(0, ti_old - old_extra_c)
+    tax_old_c = _tax_old(ti_old_c)
+    refund_old_c = round(tds - tax_old_c, 2)
 
-    old_b = _compute_old_regime(
-        gross,
-        other_income,
-        sec10_b,
-        home_loan_interest,
-        std_old,
-        pt,
-        deductions_total,
-        tds,
-    )
+    # ===== THREE QUOTES: NEW REGIME =====
+    # Option B: NEW regime with extra exemptions (sec10_14_i only)
+    new_extra_b = VARIANT_B["sec10_14_i"]
+    ti_new_b = max(0, ti_new - new_extra_b)
+    tax_new_b = _tax_new(ti_new_b)
+    refund_new_b = round(tds - tax_new_b, 2)
 
-    # ===== VARIANT C =====
-    sec10_c = (
-        hra_exempt
-        + VARIANT_C["lta"]
-        + VARIANT_C["sec10_14_i"]
-        + VARIANT_C["sec10_14_ii"]
-    )
+    # Option C: NEW regime with more extra exemptions
+    new_extra_c = VARIANT_C["sec10_14_i"] + VARIANT_C["sec10_14_ii"]
+    ti_new_c = max(0, ti_new - new_extra_c)
+    tax_new_c = _tax_new(ti_new_c)
+    refund_new_c = round(tds - tax_new_c, 2)
 
-    old_c = _compute_old_regime(
-        gross,
-        other_income,
-        sec10_c,
-        home_loan_interest,
-        std_old,
-        pt,
-        deductions_total,
-        tds,
-    )
+    # ===== DETAILED BREAKDOWN (for debugging) =====
+    def _tax_breakdown(taxable_income, regime):
+        """Return detailed tax computation breakdown."""
+        slab = _compute_slabs(taxable_income, regime)
+        tax_after_rebate, rebate_amt = _apply_rebate(slab, taxable_income, regime)
+        surcharge_info = _apply_surcharge_and_cess(tax_after_rebate, taxable_income, regime)
+        return {
+            'slab_tax': round(slab, 2),
+            'rebate_amount': round(rebate_amt, 2),
+            'tax_after_rebate': round(tax_after_rebate, 2),
+            'surcharge_rate': surcharge_info['surcharge_rate'],
+            'surcharge_amount': surcharge_info['surcharge_amount'],
+            'cess_amount': surcharge_info['cess_amount'],
+            'total_tax': surcharge_info['total_tax'],
+        }
 
-    # ===== INTERMEDIATE RAW TAXES (pre-rebate) FOR DEBUG/EXPLAINABILITY =====
-    old_slabs = tax_config.SLABS.get('OLD')
-    new_slabs = tax_config.SLABS.get('NEW')
+    breakdown_old = _tax_breakdown(ti_old, 'OLD')
+    breakdown_new = _tax_breakdown(ti_new, 'NEW')
 
-    old_a_raw = _compute_slabs(old_a["taxable"], old_slabs)
-    old_b_raw = _compute_slabs(old_b["taxable"], old_slabs)
-    old_c_raw = _compute_slabs(old_c["taxable"], old_slabs)
-    new_raw = _compute_slabs(taxable_new, new_slabs)
-
-    # ===== FINAL OUTPUT =====
+    # ===== RETURN ALL RESULTS =====
     return {
-        # Basic
+        # Inputs (summary)
         "gross_salary": round(gross, 2),
         "basic_salary": round(basic, 2),
         "hra_received": round(hra_received, 2),
         "hra_exempt_actual": round(hra_exempt, 2),
         "tds_paid": round(tds, 2),
+        "other_income": round(other_income, 2),
 
-        # Allowed capped values
-        "home_loan_interest_allowed": round(home_loan_interest, 2),
+        # Taxable incomes
+        "gti_old": round(gti_old, 2),
+        "taxable_old_a": round(ti_old, 2),
+        "taxable_new": round(ti_new, 2),
 
-        # Deductions
+        # Deductions (summary)
         "sec_80c": round(sec_80c, 2),
         "sec_80d": round(sec_80d, 2),
-        "sec_80db": round(sec_80db, 2),
-        "sec_80e": round(sec_80e, 2),
-        "sec_80g": round(sec_80g, 2),
-        "savings_interest": round(savings_interest, 2),
         "sec_80ccd_1b": round(sec_80ccd_1b, 2),
-        "sec_80ccd_2": round(sec_80ccd_2, 2),
-        "deductions_total": round(deductions_total, 2),
+        "sec_80ccd_2": round(sec_80ccd_2_old, 2),
+        "ch6a_total": round(ch6a_old, 2),
 
-        # New Regime
-        "taxable_new": round(taxable_new, 2),
-        "new_tax_raw": round(new_raw, 2),
-        "new_tax_before_cess": round(tax_new, 2),
-        "total_tax_new": total_tax_new,
-        "refund_new": refund_new,
-        "new_surcharge_rate": s_info_new.get('surcharge_rate', 0.0),
-        "new_surcharge_amount": s_info_new.get('surcharge_amount', 0.0),
-        "new_tax_after_surcharge": s_info_new.get('tax_after_surcharge', 0.0),
-        "new_cess_amount": s_info_new.get('cess_amount', 0.0),
+        # OLD REGIME ACTUAL
+        "old_slab_tax_a": breakdown_old['slab_tax'],
+        "old_rebate_a": breakdown_old['rebate_amount'],
+        "old_tax_before_cess_a": breakdown_old['tax_after_rebate'],
+        "old_surcharge_rate_a": breakdown_old['surcharge_rate'],
+        "old_surcharge_amount_a": breakdown_old['surcharge_amount'],
+        "old_cess_amount_a": breakdown_old['cess_amount'],
+        "total_tax_old_a": breakdown_old['total_tax'],
+        "refund_old_a": refund_old_actual,
 
-        # Old A
-        "taxable_old_a": old_a["taxable"],
-        "old_tax_raw_a": round(old_a_raw, 2),
-        "old_tax_before_cess_a": old_a["tax"],
-        "total_tax_old_a": old_a["total_tax"],
-        "refund_old_a": old_a["refund"],
-        "old_surcharge_rate_a": old_a.get('surcharge_rate', 0.0),
-        "old_surcharge_amount_a": old_a.get('surcharge_amount', 0.0),
-        "old_tax_after_surcharge_a": old_a.get('tax_after_surcharge', 0.0),
-        "old_cess_amount_a": old_a.get('cess_amount', 0.0),
+        # NEW REGIME ACTUAL
+        "new_slab_tax": breakdown_new['slab_tax'],
+        "new_rebate": breakdown_new['rebate_amount'],
+        "new_tax_before_cess": breakdown_new['tax_after_rebate'],
+        "new_surcharge_rate": breakdown_new['surcharge_rate'],
+        "new_surcharge_amount": breakdown_new['surcharge_amount'],
+        "new_cess_amount": breakdown_new['cess_amount'],
+        "total_tax_new": breakdown_new['total_tax'],
+        "refund_new": refund_new_actual,
 
-        # Old B
-        "taxable_old_b": old_b["taxable"],
-        "old_tax_raw_b": round(old_b_raw, 2),
-        "old_tax_before_cess_b": old_b["tax"],
-        "total_tax_old_b": old_b["total_tax"],
-        "refund_old_b": old_b["refund"],
-        "old_surcharge_rate_b": old_b.get('surcharge_rate', 0.0),
-        "old_surcharge_amount_b": old_b.get('surcharge_amount', 0.0),
-        "old_tax_after_surcharge_b": old_b.get('tax_after_surcharge', 0.0),
-        "old_cess_amount_b": old_b.get('cess_amount', 0.0),
+        # OPTION A (BEST)
+        "option_a_refund": option_a,
 
-        # Old C
-        "taxable_old_c": old_c["taxable"],
-        "old_tax_raw_c": round(old_c_raw, 2),
-        "old_tax_before_cess_c": old_c["tax"],
-        "total_tax_old_c": old_c["total_tax"],
-        "refund_old_c": old_c["refund"],
-        "old_surcharge_rate_c": old_c.get('surcharge_rate', 0.0),
-        "old_surcharge_amount_c": old_c.get('surcharge_amount', 0.0),
-        "old_tax_after_surcharge_c": old_c.get('tax_after_surcharge', 0.0),
-        "old_cess_amount_c": old_c.get('cess_amount', 0.0),
+        # OLD REGIME OPTION B
+        "taxable_old_b": round(ti_old_b, 2),
+        "total_tax_old_b": tax_old_b,
+        "refund_old_b": refund_old_b,
 
-        # Variants
-        "variant_a_refund": variant_a_refund,
-        "variant_a_regime": variant_a_regime,
-        "variant_b_refund": old_b["refund"],
-        "variant_c_refund": old_c["refund"],
+        # OLD REGIME OPTION C
+        "taxable_old_c": round(ti_old_c, 2),
+        "total_tax_old_c": tax_old_c,
+        "refund_old_c": refund_old_c,
 
-        # Status
-        "approval_status": "PENDING",
+        # NEW REGIME OPTION B
+        "taxable_new_b": round(ti_new_b, 2),
+        "total_tax_new_b": tax_new_b,
+        "refund_new_b": refund_new_b,
+
+        # NEW REGIME OPTION C
+        "taxable_new_c": round(ti_new_c, 2),
+        "total_tax_new_c": tax_new_c,
+        "refund_new_c": refund_new_c,
     }

@@ -33,7 +33,7 @@ SLABS = {
 
 # Standard deductions by regime (annual)
 STANDARD_DEDUCTION = {
-    'OLD': 50000,
+    'OLD': 52500,
     'NEW': 75000,
 }
 
