@@ -213,25 +213,32 @@ DOCUMENT TYPE: Home Loan Interest Certificate / Annual Statement / Repayment Sch
 ━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 home_loan_interest
-  → TOTAL interest PAID during FY 2025-26 (Apr 2025 – Mar 2026)
+  → TOTAL interest PAID/DEBITED during FY 2025-26 (Apr 2025 – Mar 2026)
   Labels: "Interest paid", "Total interest", "Interest for the year",
           "Interest component", "Interest charged", "Finance charges",
           "Interest amount", "Total interest paid", "Interest paid during FY",
-          "Annual interest", "Interest accrued during the year"
+          "Annual interest", "Interest accrued during the year",
+          "Interest debited during 2025-'26", "Interest debited during 2025-26",
+          "Interest debited", "Interest due"
+  ⚠ The value after the label (e.g. "Interest debited during 2025-'26 : 379030") is 379030 — NOT the year 2025
+  ⚠ Monetary amounts are ≥ 5 digits (≥ 10000). If you see a 4-digit number like "2025" next to a label, that is a YEAR — skip it and read the actual amount that follows
   ⚠ If a "Total" / "Grand Total" / "Annual Interest" row is shown → use THAT value directly
   ⚠ If only month-wise table shown → SUM only the Apr 2025–Mar 2026 rows
-  ⚠ "Interest Accrued" ≠ "Interest Paid" — use Paid, not Accrued unless only Accrued is available
+  ⚠ "Interest Accrued" ≠ "Interest Paid" — use Paid/Debited, not Accrued unless only Accrued available
   ⚠ Do NOT use cumulative/outstanding interest or interest from prior years
-  ⚠ Do NOT use the EMI amount (EMI = principal + interest combined)
+  ⚠ Do NOT use the EMI/Total Remittance amount (that is principal + interest combined)
 
 home_loan_principal
-  → TOTAL principal REPAID during FY 2025-26 (Apr 2025 – Mar 2026)
+  → TOTAL principal REPAID/REMITTED during FY 2025-26 (Apr 2025 – Mar 2026)
   Labels: "Principal paid", "Principal component", "Principal repaid",
           "Principal amount", "Repayment of principal", "EMI principal",
-          "Principal payment", "Capital repaid", "Principal for the year"
+          "Principal payment", "Capital repaid", "Principal for the year",
+          "Amount remitted towards principal", "Amount remitted towards principal during 2025-'26",
+          "Principal remitted", "Principal repaid during 2025-26"
+  ⚠ Monetary amounts are ≥ 5 digits. If label contains "2025" as a year, the amount follows separately
+  ⚠ "Total Remittance" = interest + principal combined — do NOT use it for principal alone
   ⚠ If a "Total Principal" row is shown → use THAT value directly
   ⚠ If only month-wise table → SUM only the Apr 2025–Mar 2026 principal rows
-  ⚠ Interest + Principal ≠ EMI in some formats — check carefully
 
 loan_account_no
   → Loan account / reference number
@@ -529,34 +536,43 @@ def _regex_fallback(text, doc_type):
     t = text.replace(',', '').replace('Rs.', '').replace('INR', '')
 
     if doc_type == 'homeloan':
-        # Interest — try specific labels first, then generic
+        # Minimum monetary value for homeloan — must be ≥ 10000 to exclude years like 2025
+        _MIN_LOAN_AMT = 10000
+
+        # Interest — specific labels first (most reliable), then generic
         for pat in [
-            r'total interest(?:\s+paid)?(?:\s+for\s+the\s+year)?[^\d]*(\d[\d,]+)',
-            r'interest paid(?:\s+during)?(?:\s+the\s+year)?[^\d]*(\d[\d,]+)',
-            r'interest for the year[^\d]*(\d[\d,]+)',
-            r'interest amount[^\d]*(\d[\d,]+)',
-            r'interest component[^\d]*(\d[\d,]+)',
-            r'interest[^\d]{0,30}(\d{4,}[\d,]*)',
+            r'interest\s+debited\s+during[^\d]*(\d{5,})',        # "Interest debited during 2025-'26 : 379030"
+            r'total interest(?:\s+paid)?(?:\s+for\s+the\s+year)?[^\d]*(\d{5,})',
+            r'interest paid(?:\s+during)?(?:\s+the\s+year)?[^\d]*(\d{5,})',
+            r'interest for the year[^\d]*(\d{5,})',
+            r'interest amount[^\d]*(\d{5,})',
+            r'interest component[^\d]*(\d{5,})',
+            r'interest charged[^\d]*(\d{5,})',
+            r'interest[^\d]{0,20}(\d{5,})',                       # generic — ≥5 digits only (excludes years)
         ]:
             m = re.search(pat, t, re.I)
             if m:
                 val = int(m.group(1).replace(',', ''))
-                if val > 1000:
+                if val >= _MIN_LOAN_AMT:
                     result['home_loan_interest'] = val
                     break
-        # Principal
+
+        # Principal — specific labels first
         for pat in [
-            r'principal paid[^\d]*(\d[\d,]+)',
-            r'principal repaid[^\d]*(\d[\d,]+)',
-            r'principal component[^\d]*(\d[\d,]+)',
-            r'principal amount[^\d]*(\d[\d,]+)',
-            r'repayment of principal[^\d]*(\d[\d,]+)',
-            r'principal[^\d]{0,30}(\d{4,}[\d,]*)',
+            r'amount\s+remitted\s+towards\s+principal[^\d]*(\d{5,})',  # "Amount Remitted towards principal during 2025-'26 : 342676"
+            r'principal\s+repaid\s+during[^\d]*(\d{5,})',
+            r'principal paid[^\d]*(\d{5,})',
+            r'principal repaid[^\d]*(\d{5,})',
+            r'principal component[^\d]*(\d{5,})',
+            r'principal amount[^\d]*(\d{5,})',
+            r'repayment of principal[^\d]*(\d{5,})',
+            r'principal remitted[^\d]*(\d{5,})',
+            r'principal[^\d]{0,20}(\d{5,})',                       # generic — ≥5 digits only
         ]:
             m = re.search(pat, t, re.I)
             if m:
                 val = int(m.group(1).replace(',', ''))
-                if val > 1000:
+                if val >= _MIN_LOAN_AMT:
                     result['home_loan_principal'] = val
                     break
         # Loan account
