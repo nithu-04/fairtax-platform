@@ -165,8 +165,10 @@ ONLY tuition / academic / course fees count.
 school_fees → ANNUAL tuition fees paid during FY 2025-26 (Apr 2025 – Mar 2026)
               Labels: "Tuition fees", "Tuition fee", "School fees", "Academic fees",
               "Course fees", "Fees paid", "Total tuition", "Tuition charges"
-              ⚠ If receipt shows term/quarterly fees → SUM all payments in FY 2025-26
-              ⚠ Exclude development fee, building fund, transport, hostel etc.
+              ⚠ If a "Total" / "Grand Total" / "Annual Total" row is present → use THAT single value.
+                Do NOT also add up the individual term/quarter rows — that causes double-counting.
+              ⚠ If NO total row is present → SUM only the individual term/quarter tuition rows for FY 2025-26.
+              ⚠ Exclude development fee, building fund, transport, hostel, exam, activity, uniform fees.
 
 school_name → Full name of the school or institution (from header or letterhead)
 
@@ -860,11 +862,22 @@ def extract_from_text(text, doc_type="payslip"):
             result = _parse_json(raw)
 
         if not result:
-            # Try regex fallback for investment types
             result = _regex_fallback(text, doc_type) or {}
 
         if not result:
             return {"success": False, "error": "No data extracted from text"}
+
+        # ── Form 16: section_17_1 → gross_salary fallback ────────────────────
+        # Form 16 Part B lists salary under "Section 17(1)" rather than a
+        # "Gross Salary" label. If the AI returns section_17_1 but gross_salary=0,
+        # compute gross_salary as the sum of all 17(x) components.
+        if doc_type == "form16" and not result.get("gross_salary", 0):
+            s17 = (result.get("section_17_1", 0) or 0) + \
+                  (result.get("section_17_2", 0) or 0) + \
+                  (result.get("section_17_3", 0) or 0)
+            if s17 > 0:
+                result["gross_salary"] = s17
+                print(f"[EXTRACT_TEXT][form16] gross_salary derived from section_17_x sum = {s17}")
 
         # Pull out assumptions if AI returned them inside the JSON
         assumptions = []
@@ -872,20 +885,34 @@ def extract_from_text(text, doc_type="payslip"):
             assumptions = result.pop("assumptions")
 
         is_ytd = result.pop("is_ytd", False)
-        if is_ytd:
-            assumptions.insert(0, "YTD payslip detected — values extracted from Grand Total / annual column (already annual, no ×12 needed)")
-        elif doc_type == "payslip":
-            assumptions.insert(0, "Monthly payslip detected — values are monthly; annualize by ×12 for tax calculation")
 
         # ── Deterministic HRA override for payslips ──────────────────────────
-        # AI often picks only the largest HRA component. Sum ALL HRA rows from
-        # the raw text to guarantee correctness regardless of AI behaviour.
+        # Do this BEFORE annualization so we're working on the raw per-period value.
         if doc_type == "payslip":
             hra_sum = _sum_all_hra_from_text(text)
             if hra_sum and hra_sum != result.get("hra_received", 0):
                 print(f"[HRA_SUM] Overriding AI hra_received {result.get('hra_received')} → {hra_sum}")
                 result["hra_received"] = hra_sum
                 assumptions.append(f"HRA overridden by deterministic sum of all HRA rows = {hra_sum}")
+
+        # ── Annualize monthly payslip values ─────────────────────────────────
+        # Always store ANNUAL values in the sheet. If the payslip is monthly,
+        # multiply all salary fields by 12 here so every downstream consumer
+        # (sheet save, tax engine, ExtractionValidator) sees annual figures.
+        _PAYSLIP_ANNUAL_FIELDS = [
+            "gross_salary", "basic_salary", "hra_received", "tds_paid",
+            "pf_employee", "pf_employer", "professional_tax", "lta",
+            "special_allowance", "car_lease_allowance", "uniform_allowance",
+            "gratuity", "leave_encashment",
+        ]
+        if doc_type == "payslip" and not is_ytd:
+            for f in _PAYSLIP_ANNUAL_FIELDS:
+                if result.get(f, 0):
+                    result[f] = result[f] * 12
+            assumptions.insert(0, "Monthly payslip — all salary fields annualized (×12)")
+            result["_is_annualized"] = True
+        else:
+            assumptions.insert(0, "YTD/annual payslip — values already represent the full year")
 
         print(f"[EXTRACT_TEXT][{doc_type}] result: {result}")
 
