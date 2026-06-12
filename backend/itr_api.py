@@ -474,6 +474,31 @@ def extract_batch():
             try:
                 file_bytes = file.read()
                 result = _get_processor().process_file(file_bytes, file.filename)
+
+                # 🔥 CRITICAL FIX: Normalize extracted data in batch mode too
+                # Even though doc_type is not specified, we should normalize payslips
+                if result.get('success') and result.get('data'):
+                    try:
+                        from services import normalization_service
+                        extracted_data = result.get('data', {})
+
+                        # For batch, we don't know doc_type, but we can try to infer it
+                        # or normalize cautiously (with guard against double-annualization)
+                        inferred_doc_type = extracted_data.get('_doc_type', 'unknown')
+
+                        normalized_result = normalization_service.normalize_extractions(
+                            [extracted_data],
+                            [inferred_doc_type]
+                        )
+
+                        normalized_data = normalized_result.get("normalized", {})
+                        if normalized_data:
+                            result['data'].update(normalized_data)
+                            print(f"[ITR_EXTRACT_BATCH] Normalized {file.filename}: doc_type={inferred_doc_type}")
+                    except Exception as norm_error:
+                        print(f"[ITR_EXTRACT_BATCH] Normalization warning for {file.filename}: {norm_error}")
+                        # Non-blocking: continue without normalization
+
                 results.append({
                     'filename': file.filename,
                     'success': result['success'],
