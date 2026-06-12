@@ -288,6 +288,38 @@ def extract_itr_data():
             }
 
         # ═══════════════════════════════════════════════════════════
+        # 🔥 CRITICAL FIX: NORMALIZE & ANNUALIZE EXTRACTED DATA
+        # This ensures payslip monthly values are converted to annual
+        # ═══════════════════════════════════════════════════════════
+        if result.get('success') and result.get('data'):
+            try:
+                from services import normalization_service
+                extracted_data = result.get('data', {})
+
+                print(f"[ITR_EXTRACT] BEFORE NORMALIZATION: gross_salary={extracted_data.get('gross_salary')}, doc_type={doc_type}")
+
+                # Normalize the extracted data
+                normalized_result = normalization_service.normalize_extractions(
+                    [extracted_data],
+                    [doc_type]
+                )
+
+                normalized_data = normalized_result.get("normalized", {})
+                print(f"[ITR_EXTRACT] AFTER NORMALIZATION: gross_salary={normalized_data.get('gross_salary')}, doc_type={doc_type}")
+
+                # Update result with normalized data
+                if normalized_data:
+                    result['data'].update(normalized_data)
+                    assumptions = normalized_result.get("assumptions", [])
+                    if assumptions:
+                        result['data']['_normalization_assumptions'] = assumptions
+                        print(f"[ITR_EXTRACT] Normalization assumptions: {assumptions}")
+
+            except Exception as e:
+                print(f"[ITR_EXTRACT] WARNING: Normalization failed (non-blocking): {e}")
+                # Non-blocking: continue without normalization
+
+        # ═══════════════════════════════════════════════════════════
         # SAVE DOCUMENTS TO DISK AND GOOGLE SHEETS
         # ═══════════════════════════════════════════════════════════
         urls = []
