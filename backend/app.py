@@ -787,6 +787,10 @@ def extract():
         doc_type = request.form.get("doc_type", "form16")
         files = request.files.getlist("documents")
 
+        print(f"\n{'='*80}")
+        print(f"[EXTRACT_START] Called with submission_id={submission_id}, doc_type={doc_type}, files={len(files)}")
+        print(f"{'='*80}\n")
+
         row = sheets_service.get_row_by_submission_id(submission_id)
 
         # Ensure row exists before processing documents
@@ -923,8 +927,10 @@ def extract():
                 extractions.append(extracted_data)
 
         # Merge multiple documents if applicable (existing logic)
+        print(f"[EXTRACT] About to merge {len(extractions)} extractions")
         merged = ai_service.merge_extractions(extractions)
         conflicts = merged.pop('_merge_conflicts', [])
+        print(f"[EXTRACT] After merge: gross_salary={merged.get('gross_salary')}, doc_type={merged.get('_doc_type')}")
 
         # FIX: Preserve Form16 annual values when processing Payslip separately
         # When only Payslip is extracted (separate API call from Form16), preserve the Form16
@@ -970,6 +976,7 @@ def extract():
         try:
             print(f"[EXTRACT] Normalizing final merged dataset...")
             primary_doc_type = merged.get('_doc_type', doc_type)
+            print(f"[EXTRACT] primary_doc_type={primary_doc_type}, gross_salary before norm={merged.get('gross_salary')}")
 
             # Call normalize_extractions on the final merged result
             normalized_result = normalization_service.normalize_extractions(
