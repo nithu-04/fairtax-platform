@@ -1019,11 +1019,21 @@ def merge_extractions(extractions):
     for k, entries in field_sources.items():
         all_numeric = all(isinstance(e['value'], (int, float)) for e in entries)
 
+        # 🔍 TRACE: Log all candidates for salary fields
+        if k in NEVER_SUM_FIELDS and len(entries) > 1:
+            print(f"\n[MERGE_FIELD_TRACE] {k}")
+            print(f"  entries_count: {len(entries)}")
+            for i, entry in enumerate(entries):
+                print(f"  [{i}] value={entry['value']}, doc_type={entry['doc_type']}, source={entry['source']}, priority={SOURCE_PRIORITY.get(entry['doc_type'], 99)}")
+
         # CRITICAL: Salary fields NEVER sum, even if multiple documents
         if k in NEVER_SUM_FIELDS and len(entries) > 1 and all_numeric:
             # Use source priority instead of summing
             best = _select_by_source_priority(entries)
             if best:
+                # 🔍 TRACE: Log selection result
+                print(f"  → SELECTED: value={best['value']}, doc_type={best['doc_type']}, source={best['source']}")
+
                 out[k] = best['value']
                 out[f"{k}_source"] = best['source']
                 out[f"{k}_doc_type"] = best['doc_type']

@@ -203,6 +203,16 @@ def extract_itr_data():
                 # Track file for storage (if processing succeeded)
                 processed_file_info = None
                 if result.get('success'):
+                    # 🔍 TRACE: Log extraction result with doc_type
+                    extracted_data = result.get('data', {})
+                    print(f"\n[EXTRACTION_TRACE] {filename}")
+                    print(f"  document: {filename}")
+                    print(f"  detected_doc_type: {detected_doc_type}")
+                    print(f"  gross_salary: {extracted_data.get('gross_salary')}")
+                    print(f"  basic_salary: {extracted_data.get('basic_salary')}")
+                    print(f"  hra_received: {extracted_data.get('hra_received')}")
+                    print(f"  _doc_type set to: {detected_doc_type}")
+
                     processed_file_info = {
                         'file_obj': file_obj,
                         'filename': filename,
@@ -256,9 +266,12 @@ def extract_itr_data():
         # If only one file, return its result directly
         if len(all_results) == 1:
             result = all_results[0]
+            # 🔍 TRACE: Single file case
+            print(f"\n[MERGE_INPUT_TRACE] Single file extraction")
+            print(f"  _doc_type in result: {result.get('data', {}).get('_doc_type', 'NOT SET')}")
         else:
             # Multiple files: merge results using ai_service merge logic
-            print(f"[ITR_EXTRACT] Processing {len(all_results)} files, merging with source priority...")
+            print(f"\n[ITR_EXTRACT] Processing {len(all_results)} files, merging with source priority...")
 
             # Build extraction list with metadata for merge
             extractions_for_merge = []
@@ -268,6 +281,15 @@ def extract_itr_data():
                     # Add doc_type and confidence metadata for merge logic
                     data['_doc_type'] = doc_type  # All files were processed with same doc_type
                     data['_confidence'] = res.get('confidence', 0)
+
+                    # 🔍 TRACE: Log what's being sent to merge
+                    print(f"\n[MERGE_INPUT_TRACE] File {idx}")
+                    print(f"  filename: {res.get('filename', 'unknown')}")
+                    print(f"  _doc_type set to: {data.get('_doc_type')}")
+                    print(f"  gross_salary: {data.get('gross_salary')}")
+                    print(f"  basic_salary: {data.get('basic_salary')}")
+                    print(f"  hra_received: {data.get('hra_received')}")
+
                     extractions_for_merge.append(data)
 
             # Use ai_service merge_extractions which handles salary field priority correctly
@@ -303,24 +325,40 @@ def extract_itr_data():
         # 🔥 CRITICAL FIX: NORMALIZE & ANNUALIZE EXTRACTED DATA
         # This ensures payslip monthly values are converted to annual
         # ═══════════════════════════════════════════════════════════
-        print(f"[ITR_EXTRACT_DEBUG] result.success={result.get('success')}, has_data={bool(result.get('data'))}, data_keys={list(result.get('data', {}).keys())[:5]}")
-
         if result.get('success') and result.get('data'):
-            print(f"[ITR_EXTRACT_DEBUG] ENTERING NORMALIZATION BLOCK")
             try:
                 from services import normalization_service
                 extracted_data = result.get('data', {})
 
-                print(f"[ITR_EXTRACT] BEFORE NORMALIZATION: gross_salary={extracted_data.get('gross_salary')}, doc_type={doc_type}")
+                # 🔍 TRACE: Log primary_doc_type determination
+                primary_doc_type = extracted_data.get('_doc_type', doc_type)
+                print(f"\n[NORMALIZATION_TRACE] primary_doc_type determination:")
+                print(f"  extracted_data._doc_type: {extracted_data.get('_doc_type', 'NOT SET')}")
+                print(f"  doc_type param: {doc_type}")
+                print(f"  primary_doc_type: {primary_doc_type}")
+
+                # 🔍 TRACE: Log values BEFORE normalization
+                print(f"\n[NORMALIZATION_TRACE] BEFORE normalization:")
+                print(f"  gross_salary: {extracted_data.get('gross_salary')}")
+                print(f"  basic_salary: {extracted_data.get('basic_salary')}")
+                print(f"  hra_received: {extracted_data.get('hra_received')}")
+                print(f"  tds_paid: {extracted_data.get('tds_paid')}")
+                print(f"  _doc_type: {extracted_data.get('_doc_type', 'NOT SET')}")
 
                 # Normalize the extracted data
                 normalized_result = normalization_service.normalize_extractions(
                     [extracted_data],
-                    [doc_type]
+                    [primary_doc_type]
                 )
 
                 normalized_data = normalized_result.get("normalized", {})
-                print(f"[ITR_EXTRACT] AFTER NORMALIZATION: gross_salary={normalized_data.get('gross_salary')}, doc_type={doc_type}")
+
+                # 🔍 TRACE: Log values AFTER normalization
+                print(f"\n[NORMALIZATION_TRACE] AFTER normalization:")
+                print(f"  gross_salary: {normalized_data.get('gross_salary')}")
+                print(f"  basic_salary: {normalized_data.get('basic_salary')}")
+                print(f"  hra_received: {normalized_data.get('hra_received')}")
+                print(f"  tds_paid: {normalized_data.get('tds_paid')}")
 
                 # Update result with normalized data
                 if normalized_data:
@@ -387,8 +425,14 @@ def extract_itr_data():
         elapsed = time.time() - start_time
         if result['success']:
             logger.info(f"[ITR_EXTRACT] Success in {elapsed:.2f}s")
-            # FINAL DEBUG: Log what we're returning
-            print(f"[ITR_EXTRACT_FINAL] Returning gross_salary={result.get('data', {}).get('gross_salary')}, doc_type={doc_type}")
+            # 🔍 TRACE: Final output before returning to frontend
+            final_data = result.get('data', {})
+            print(f"\n[FINAL_RETURN_TRACE] What /api/itr/extract returns to frontend:")
+            print(f"  gross_salary: {final_data.get('gross_salary')}")
+            print(f"  basic_salary: {final_data.get('basic_salary')}")
+            print(f"  hra_received: {final_data.get('hra_received')}")
+            print(f"  tds_paid: {final_data.get('tds_paid')}")
+            print(f"  _doc_type: {final_data.get('_doc_type', 'NOT SET')}")
             return jsonify(result), 200
         else:
             # Extraction failed — return 200 (no CORS issues) but success:false

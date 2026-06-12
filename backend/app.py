@@ -240,9 +240,15 @@ def save_phase():
             if missing:
                 return jsonify({"success": False, "error": f"Missing required fields for regular filing: {', '.join(missing)}"}), 400
 
-        # Debug: log incoming save keys for troubleshooting
+        # 🔍 TRACE: Log incoming data to /api/save-phase
         try:
-            print(f"[SAVE_PHASE] incoming keys={list(data.keys())} phone={data.get('phone')} filing_category={data.get('filing_category')}")
+            print(f"\n[SAVE_PHASE_INCOMING_TRACE] Received data:")
+            print(f"  gross_salary: {data.get('gross_salary')}")
+            print(f"  basic_salary: {data.get('basic_salary')}")
+            print(f"  hra_received: {data.get('hra_received')}")
+            print(f"  tds_paid: {data.get('tds_paid')}")
+            print(f"  _doc_type: {data.get('_doc_type', 'NOT SET')}")
+            print(f"  phone: {data.get('phone')}, filing_category: {data.get('filing_category')}")
         except Exception:
             pass
 
@@ -304,6 +310,13 @@ def save_phase():
                         print(f"[SAVE_PHASE_PROTECT] Keeping existing {field}={row[field]} "
                               f"(new extraction tried: {data[field]})")
                         update_data[field] = row[field]
+
+                # 🔍 TRACE: Log what's being saved to database
+                print(f"\n[SAVE_PHASE_DB_WRITE_TRACE] Writing to database:")
+                print(f"  gross_salary: {update_data.get('gross_salary')}")
+                print(f"  basic_salary: {update_data.get('basic_salary')}")
+                print(f"  hra_received: {update_data.get('hra_received')}")
+                print(f"  tds_paid: {update_data.get('tds_paid')}")
 
                 sheets_service.update_row(row, update_data)
 
