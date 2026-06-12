@@ -1,0 +1,225 @@
+═══════════════════════════════════════════════════════════════════════════════
+EXPECTED TEST EXECUTION FLOW
+═══════════════════════════════════════════════════════════════════════════════
+
+Test Case: Upload Form16 + Payslip for same employee
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 1: DOCUMENT EXTRACTION
+═══════════════════════════════════════════════════════════════════════════════
+
+User uploads Form16.pdf + Payslip.pdf → POST /api/extract
+
+ThreadPoolExecutor processes both in parallel:
+
+DOCUMENT 1: Form16.pdf
+──────────────────────
+[EXTRACT] Processing Form16.pdf with Vision pipeline...
+[EXTRACT] Form16.pdf: confidence=0.95, pages=1
+[EXTRACT_OUTPUT] Form16.pdf => gross_salary=3141557 | basic_salary=1168656 | hra_received=584330
+
+    └─ document_processor.process_documents()
+        └─ normalization_service.normalize_extractions([form16_data], ['form16'])
+            └─ _annualize_payslip_field('gross_salary', 3141557, 'form16')
+               → Skips ×12 (doc_type != 'payslip')
+               → Returns 3141557
+
+Result: normalized_data = {'gross_salary': 3141557, ..., '_doc_type': 'form16'}
+
+DOCUMENT 2: Payslip.pdf
+───────────────────────
+[EXTRACT] Processing Payslip.pdf with Vision pipeline...
+[EXTRACT] Payslip.pdf: confidence=0.88, pages=1
+[EXTRACT_OUTPUT] Payslip.pdf => gross_salary=233937 | basic_salary=99133 | hra_received=49567
+
+    └─ document_processor.process_documents()
+        └─ normalization_service.normalize_extractions([payslip_data], ['payslip'])
+            └─ _annualize_payslip_field('gross_salary', 233937, 'payslip')
+               → Checks if value > 500000: NO
+               → Returns 233937 × 12 = 2807244
+
+Result: normalized_data = {'gross_salary': 2807244, ..., '_doc_type': 'payslip'}
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 2: MERGE WITH SOURCE PRIORITY (NEW)
+═══════════════════════════════════════════════════════════════════════════════
+
+extractions = [
+    {'gross_salary': 3141557, '_doc_type': 'form16', '_confidence': 0.95, ...},
+    {'gross_salary': 2807244, '_doc_type': 'payslip', '_confidence': 0.88, ...}
+]
+
+Call: merged = ai_service.merge_extractions(extractions)
+
+Processing gross_salary field:
+    entries = [
+        {'value': 3141557, 'source': 'Form16.pdf', 'doc_type': 'form16', 'confidence': 0.95},
+        {'value': 2807244, 'source': 'Payslip.pdf', 'doc_type': 'payslip', 'confidence': 0.88}
+    ]
+
+    Check: Is 'gross_salary' in NEVER_SUM_FIELDS? YES
+    Check: len(entries) > 1? YES
+    Check: all_numeric? YES
+
+    → Call _select_by_source_priority(entries)
+        Rank by SOURCE_PRIORITY:
+            form16: priority=1
+            payslip: priority=3
+
+        Select: Best = form16 entry
+
+    [SOURCE_PRIORITY] Selected Form16.pdf (doc_type=form16, priority=1, confidence=0.95) from 2 option(s)
+
+    Result:
+        out['gross_salary'] = 3141557
+        out['gross_salary_source'] = 'Form16.pdf'
+        out['gross_salary_doc_type'] = 'form16'
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 3: NORMALIZE FINAL MERGED (NEW)
+═══════════════════════════════════════════════════════════════════════════════
+
+After merge, merged data contains:
+    {
+        'gross_salary': 3141557,
+        'basic_salary': 1168656,
+        'hra_received': 584330,
+        '_doc_type': 'form16',
+        ...
+    }
+
+Call: normalized_result = normalization_service.normalize_extractions(
+    [merged],
+    ['form16']
+)
+
+Processing gross_salary:
+    value = 3141557
+    doc_type = 'form16'
+
+    Call: _annualize_payslip_field('gross_salary', 3141557, 'form16')
+        Check: doc_type != 'payslip'? YES
+        → Returns 3141557 (unchanged)
+
+[EXTRACT] Normalizing final merged dataset...
+[EXTRACT] Normalization complete. Confidence: 0.91
+
+Final result:
+    normalized_data = {
+        'gross_salary': 3141557,
+        'basic_salary': 1168656,
+        'hra_received': 584330,
+        ...
+    }
+
+merged.update(normalized_data)
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 4: DATABASE INSERT
+═══════════════════════════════════════════════════════════════════════════════
+
+sheets_service.insert_submission(merged)
+
+Google Sheets record created:
+    Row: [submission_id, ..., gross_salary=3141557, basic_salary=1168656, hra_received=584330, ...]
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 5: FORM SUBMISSION
+═══════════════════════════════════════════════════════════════════════════════
+
+User fills form and clicks "Submit" → POST /api/submit
+
+Form data (might have manual entry):
+    {
+        'submission_id': 'xyz123',
+        'name': 'John Doe',
+        'gross_salary': 233937,  ← User accidentally enters monthly
+        'basic_salary': 99133,
+        'hra_received': 49567,
+        ...
+    }
+
+GET from sheet:
+    existing_rec = {
+        'gross_salary': 3141557,  ← Extracted from Form16
+        'basic_salary': 1168656,
+        'hra_received': 584330,
+        ...
+    }
+
+MERGE WITH PROTECTION:
+    EXTRACTED_SALARY_FIELDS = {'gross_salary', 'basic_salary', ...}
+
+    For each form field:
+        key='gross_salary', value=233937
+        Check: Is key in EXTRACTED_SALARY_FIELDS? YES
+        Check: Does sheet have this value? YES (3141557 exists)
+        → BLOCK form override!
+
+        [SUBMIT_PROTECT] Keeping extracted gross_salary=3141557
+                         (form submitted: 233937, form override blocked)
+
+    Final merged_data:
+        {
+            'gross_salary': 3141557,  ← PROTECTED!
+            'basic_salary': 1168656,
+            'hra_received': 584330,
+            ...
+            'name': 'John Doe',  ← Form value used (not protected field)
+        }
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 6: TAX ENGINE CALCULATION
+═══════════════════════════════════════════════════════════════════════════════
+
+Call: engine_calc = tax_engine.calculate(merged_data)
+
+TAX_ENGINE_INPUT:
+    {
+        'gross_salary': 3141557,  ✓ CORRECT (annual)
+        'basic_salary': 1168656,  ✓ CORRECT (annual)
+        'hra_received': 584330,   ✓ CORRECT (annual)
+        'tds_paid': 425742,       ✓ CORRECT
+        ...
+    }
+
+[TAX_ENGINE_INPUT] gross_salary=3141557, basic_salary=1168656, hra_received=584330, ...
+
+Tax Calculation Logic:
+    Result: taxable_old ≈ 1,457,227
+    Result: taxable_new ≈ 2,391,557
+    Result: refund values correct (not 42,744)
+
+═══════════════════════════════════════════════════════════════════════════════
+PHASE 7: RESULTS
+═══════════════════════════════════════════════════════════════════════════════
+
+Database final state:
+    ✓ gross_salary = 3141557 (CORRECT)
+    ✓ basic_salary = 1168656 (CORRECT)
+    ✓ hra_received = 584330 (CORRECT)
+    ✓ taxable_new ≈ 2,391,557 (CORRECT)
+    ✓ refund_new correct (not 42,744)
+
+COMPARE TO BEFORE FIX:
+    ✗ gross_salary = 233937 (WRONG - monthly)
+    ✗ basic_salary = 99133 (WRONG - monthly)
+    ✗ hra_received = 49567 (WRONG - monthly)
+    ✗ taxable_new = 158937 (WRONG)
+    ✗ refund_new = 42744 (WRONG)
+
+═══════════════════════════════════════════════════════════════════════════════
+KEY TRACE LOGS TO VERIFY
+═══════════════════════════════════════════════════════════════════════════════
+
+✓ [EXTRACT_OUTPUT] form16.pdf => gross_salary=3141557
+✓ [EXTRACT_OUTPUT] payslip.pdf => gross_salary=233937
+✓ [SOURCE_PRIORITY] Selected form16.pdf (doc_type=form16, priority=1) from 2 option(s)
+✓ [EXTRACT] Normalizing final merged dataset...
+✓ [EXTRACT] Normalization complete.
+✓ [SUBMIT_PROTECT] Keeping extracted gross_salary=3141557 (form submitted: 233937, ...)
+✓ [TAX_ENGINE_INPUT] gross_salary=3141557, basic_salary=1168656, hra_received=584330
+
+If these logs appear: FIX IS WORKING ✅
+
+═══════════════════════════════════════════════════════════════════════════════

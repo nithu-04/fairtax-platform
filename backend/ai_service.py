@@ -910,18 +910,74 @@ def extract_from_text(text, doc_type="payslip"):
         return {"success": False, "error": str(e)}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SALARY FIELDS: NEVER SUM across documents (each is singular per year)
+# ─────────────────────────────────────────────────────────────────────────────
+NEVER_SUM_FIELDS = {
+    'gross_salary', 'basic_salary', 'hra_received', 'tds_paid',
+    'pf_employee', 'pf_employer', 'lta', 'special_allowance',
+    'car_lease_allowance', 'uniform_allowance', 'gratuity', 'leave_encashment'
+}
+
+# Source priority for field selection (lower number = higher priority)
+SOURCE_PRIORITY = {
+    'form16': 1,           # Most authoritative, official annual summary
+    'payslip_ytd': 2,      # Year-to-date payslip (annual)
+    'payslip': 3,          # Monthly payslip (needs annualization)
+    'manual': 4,           # Lowest priority, user manual entry
+}
+
+
+def _select_by_source_priority(entries):
+    """
+    Select the best entry based on source priority.
+
+    Priority order:
+    1. Form16 (most authoritative)
+    2. Payslip YTD (annual payslip)
+    3. Monthly Payslip (monthly values)
+    4. Manual entry (lowest priority)
+
+    Args:
+        entries: List of {'value': ..., 'raw': ..., 'source': ..., 'doc_type': ...}
+
+    Returns:
+        Best entry dict with selected value and metadata
+    """
+    def _get_priority(entry):
+        doc_type = entry.get('doc_type', 'unknown').lower()
+        return SOURCE_PRIORITY.get(doc_type, 99)
+
+    if not entries:
+        return None
+
+    # Sort by priority (lower number = higher priority)
+    ranked = sorted(entries, key=_get_priority)
+    best = ranked[0]
+
+    doc_type = best.get('doc_type', 'unknown').lower()
+    priority = _get_priority(best)
+
+    print(f"[SOURCE_PRIORITY] Selected {best.get('source')} (doc_type={doc_type}, priority={priority}, "
+          f"confidence={best.get('confidence', 'N/A')}) from {len(entries)} option(s)")
+
+    return best
+
+
 def merge_extractions(extractions):
-    """Merge multiple extractions with conflict detection.
-    - If multiple documents are uploaded (len(extractions)>1), numeric fields are SUMMED across documents.
-      This is useful for situations like multiple payslips where values should be aggregated.
-    - Otherwise, preserve previous conservative behaviour: for numeric fields prefer first non-zero,
-      and if two non-zero numeric values differ by >5% mark a conflict and use the max.
-    - Strings: use first non-empty value.
+    """
+    Merge multiple extractions with source priority and conflict detection.
+
+    KEY CHANGE: Salary fields are NO LONGER SUMMED.
+    Instead, source priority logic selects the best value (Form16 > Payslip YTD > Payslip > Manual).
+
+    Investment fields (school, homeloan, insurance, donations) continue to SUM when appropriate.
+
     Returns merged_dict with keys, plus `_merge_conflicts` and `_sources` metadata.
     """
     out = {}
     conflicts = []
-    field_sources = {}  # field -> list of {'value':parsed_or_raw, 'raw':original, 'source':source}
+    field_sources = {}  # field -> list of {'value':parsed_or_raw, 'raw':original, 'source':source, 'doc_type':..., 'confidence':...}
 
     def _parse_num_maybe(v):
         """Return float if v contains a numeric value, otherwise None."""
@@ -939,61 +995,76 @@ def merge_extractions(extractions):
         except Exception:
             return None
 
+    # Build field_sources with enriched metadata
     for i, ext in enumerate(extractions):
         src = ext.get('_source_filename') or ext.get('_doc_type') or f"doc_{i+1}"
+        doc_type = ext.get('_doc_type', 'unknown').lower()
+        confidence = ext.get('_confidence', 0)
+
         for k, v in ext.items():
             if k.startswith('_'):
                 continue
             parsed = _parse_num_maybe(v)
-            entry = {'value': parsed if parsed is not None else v, 'raw': v, 'source': src}
+            # Enriched entry with document type and confidence
+            entry = {
+                'value': parsed if parsed is not None else v,
+                'raw': v,
+                'source': src,
+                'doc_type': doc_type,
+                'confidence': confidence
+            }
             field_sources.setdefault(k, []).append(entry)
 
+    # Merge each field
     for k, entries in field_sources.items():
-        # Determine if entries are all numeric
-        all_numeric = all(isinstance(e['value'], (int, float)) or isinstance(e['value'], float) for e in entries)
-        if len(entries) > 1 and all_numeric:
-            total = sum(float(e['value']) for e in entries)
-            # cast to int when exact
-            if float(total).is_integer():
-                total = int(total)
-            out[k] = total
+        all_numeric = all(isinstance(e['value'], (int, float)) for e in entries)
+
+        # CRITICAL: Salary fields NEVER sum, even if multiple documents
+        if k in NEVER_SUM_FIELDS and len(entries) > 1 and all_numeric:
+            # Use source priority instead of summing
+            best = _select_by_source_priority(entries)
+            if best:
+                out[k] = best['value']
+                out[f"{k}_source"] = best['source']
+                out[f"{k}_doc_type"] = best['doc_type']
             continue
 
-        # Fallback: conservative merge for mixed or single entries
-        merged_val = None
-        for e in entries:
-            v = e['value']
-            if isinstance(v, (int, float)):
-                if merged_val is None or merged_val == 0:
-                    merged_val = v
-                elif v == 0:
-                    continue
-                else:
-                    diff_pct = abs(merged_val - v) / max(merged_val, v) * 100
-                    if diff_pct > 5:
-                        conflicts.append({
-                            "field": k,
-                            "value1": merged_val,
-                            "value2": v,
-                            "diff_pct": round(diff_pct, 1)
-                        })
-                    merged_val = max(merged_val, v)
+        # For other numeric fields (investments), sum if multiple documents of same type
+        if len(entries) > 1 and all_numeric and k not in NEVER_SUM_FIELDS:
+            # Check if all documents are of compatible type (both payslips, both form16s, etc.)
+            doc_types = {e['doc_type'] for e in entries}
+            if len(doc_types) == 1:
+                # Same document type: safe to sum
+                total = sum(float(e['value']) for e in entries)
+                if float(total).is_integer():
+                    total = int(total)
+                out[k] = total
+                print(f"[MERGE] Summed {k}: {len(entries)} documents, total={total}")
+                continue
             else:
-                # string: first non-empty wins
-                if merged_val is None or merged_val == "":
-                    merged_val = v
+                # Mixed document types: use priority (don't sum across Form16 + Payslip)
+                best = _select_by_source_priority(entries)
+                if best:
+                    out[k] = best['value']
+                    out[f"{k}_source"] = best['source']
+                    out[f"{k}_doc_type"] = best['doc_type']
+                continue
 
-        # Default non-found numeric -> 0, strings -> empty string
-        if merged_val is None:
-            if any(isinstance(e['value'], (int, float)) for e in entries):
-                merged_val = 0
-            else:
-                merged_val = ""
-
-        out[k] = merged_val
+        # Single entry or mixed types: use priority-based selection
+        if len(entries) >= 1:
+            best = _select_by_source_priority(entries) if len(entries) > 1 else entries[0]
+            if best:
+                merged_val = best['value']
+                out[k] = merged_val
+                out[f"{k}_source"] = best['source']
+                out[f"{k}_doc_type"] = best['doc_type']
+        else:
+            # No entries for this field
+            out[k] = 0 if all_numeric else ""
 
     out['_merge_conflicts'] = conflicts
-    out['_sources'] = {k: [{'value': e['raw'], 'source': e['source']} for e in entries] for k, entries in field_sources.items()}
+    out['_sources'] = {k: [{'value': e['raw'], 'source': e['source'], 'doc_type': e['doc_type']} for e in entries]
+                       for k, entries in field_sources.items()}
     return out
 
 
@@ -1125,6 +1196,32 @@ def validate_form16_payslip_consistency(merged_data, extractions):
         # TDS: use Form 16 (annual)
         if form16_doc.get('tds_paid'):
             merged_data['tds_paid'] = form16_doc.get('tds_paid')
+    elif payslip_doc:
+        # FIX: Preserve Form16 values from earlier extractions
+        # When only payslip is in this extraction but Form16 values already exist in merged_data,
+        # detect if payslip values are monthly (much smaller) and preserve the annual Form16 values.
+        # This handles the case where Form16 + Payslip are uploaded in SEPARATE API calls.
+        for field_key, _ in annual_fields:
+            payslip_val = _to_num(payslip_doc.get(field_key))
+            merged_val = _to_num(merged_data.get(field_key, 0))
+
+            # Skip if payslip has no value
+            if payslip_val == 0:
+                continue
+
+            # Check if merged_data already has a much larger value (likely annual Form16)
+            if merged_val > 0:
+                ratio = merged_val / max(payslip_val, 1)
+                # If existing value is much larger (>10x), it's likely annual vs monthly payslip
+                if ratio > 10:
+                    # Keep the existing annual value, don't overwrite with monthly payslip
+                    print(f"[CONFLICT] Preserving larger value for {field_key}: {merged_val} (likely annual) over {payslip_val} (likely monthly payslip)")
+                    merged_data[field_key] = merged_val
+                    continue
+
+            # If merged value is 0 or similar size, use the payslip value as default
+            if merged_val == 0 or (merged_val > 0 and payslip_val > merged_val * 0.5):
+                merged_data[field_key] = payslip_val
 
     # Store conflicts for response
     if conflicts:

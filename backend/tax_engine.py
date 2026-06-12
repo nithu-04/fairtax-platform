@@ -176,11 +176,23 @@ def calculate(payload):
     g = lambda k, d=0: _num(payload.get(k, d))
     is_metro = str(payload.get("city_type", "")).lower() == "metro"
 
-    # ===== INPUTS =====
+    # ===== INPUT VALIDATION & LOGGING =====
+    # CRITICAL FIX: Log all inputs for audit trail and validation
     gross = g("gross_salary")
     basic = g("basic_salary")
     hra_received = g("hra_received")
     monthly_rent = g("monthly_rent")
+    tds = g("tds_paid") or g("tds_deducted")
+    home_loan_interest_raw = g("home_loan_interest")
+
+    # Validate that values are annual (not monthly)
+    if gross > 0 and gross < 240000 and basic > 0:
+        # May be monthly - log warning
+        print(f"[TAX_ENGINE][WARN] gross_salary={gross:,.0f} seems monthly. Proceeding but may be incorrect.")
+
+    print(f"[TAX_ENGINE][INPUTS] gross={gross:,.0f} | basic={basic:,.0f} | hra={hra_received:,.0f} | rent={monthly_rent:,.0f} | tds={tds:,.0f} | homeloan_int={home_loan_interest_raw:,.0f}")
+
+    # ===== INPUTS =====
 
     other_income = (
         g("other_income_misc")
@@ -188,8 +200,6 @@ def calculate(payload):
         + g("dividend")
         + g("refund_interest")
     )
-
-    tds = g("tds_paid") or g("tds_deducted")
 
     # ===== SECTION 10 EXEMPTIONS =====
     hra_exempt = calculate_hra_exemption(basic, hra_received, monthly_rent, is_metro)
@@ -298,10 +308,11 @@ def calculate(payload):
 
     # ===== RETURN ALL RESULTS =====
     return {
-        # Inputs (summary)
+        # Inputs (summary) - CRITICAL: Include home_loan_interest for sheet persistence
         "gross_salary": round(gross, 2),
         "basic_salary": round(basic, 2),
         "hra_received": round(hra_received, 2),
+        "home_loan_interest": round(home_loan_interest, 2),  # Pass through for sheet storage
         "hra_exempt_actual": round(hra_exempt, 2),
         "tds_paid": round(tds, 2),
         "other_income": round(other_income, 2),

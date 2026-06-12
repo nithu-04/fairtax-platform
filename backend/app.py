@@ -4,7 +4,7 @@ from config import Config
 import ai_service, tax_engine, sheets_service, storage_service, manychat_service as whatsapp_service
 import base64, traceback, os, requests as _requests, logging, sys
 from pdf_service import generate_quote_pdf
-from services import document_processor, quality_checker, doc_type_detector
+from services import document_processor, quality_checker, doc_type_detector, normalization_service
 from extraction_validator import ExtractionValidator
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -247,7 +247,8 @@ def save_phase():
             pass
 
         # Unpack JSON investment blobs into individual columns so review page can display them
-        if any(k in data for k in ('home_loans_json', 'insurance_policies_json', 'donations_json')):
+        # CRITICAL FIX: Include school_fees_json in aggregation check
+        if any(k in data for k in ('home_loans_json', 'insurance_policies_json', 'donations_json', 'school_fees_json')):
             try:
                 aggregates = _aggregate_investments(data)
                 if aggregates:
@@ -286,8 +287,25 @@ def save_phase():
                     insert_res = None
 
             # 🔥 CASE 3: normal update
+            # CRITICAL: Protect extracted salary fields from being overwritten by new extractions
             else:
-                sheets_service.update_row(row, data)
+                EXTRACTED_SALARY_FIELDS = {
+                    'gross_salary', 'basic_salary', 'hra_received', 'tds_paid',
+                    'pf_employee', 'pf_employer', 'professional_tax'
+                }
+
+                # Only update salary fields if they're not already in the sheet (from Form16)
+                # This prevents payslip monthly values from overwriting form16 annual values
+                update_data = dict(data)
+                for field in EXTRACTED_SALARY_FIELDS:
+                    sheet_has_value = row.get(field) is not None
+                    if sheet_has_value and data.get(field) is not None:
+                        # Keep existing sheet value, don't let new extraction override
+                        print(f"[SAVE_PHASE_PROTECT] Keeping existing {field}={row[field]} "
+                              f"(new extraction tried: {data[field]})")
+                        update_data[field] = row[field]
+
+                sheets_service.update_row(row, update_data)
 
         # [OK] HOOK: Update referral status if this user was referred
         # When a user saves their registration info (name + phone), check if they were referred
@@ -423,6 +441,199 @@ def _deduplicate_and_sum_array(items, dedup_key, sum_keys):
     return totals, duplicates
 
 
+def _validate_before_tax_calculation(merged_data):
+    """
+    PRE-TAX VALIDATION: Detect extraction issues before tax calculation.
+
+    Checks for:
+    - Monthly vs annual value mismatches
+    - Missing critical fields
+    - Data sanity (negative values, extreme outliers)
+    - Gross salary reasonableness
+
+    Returns:
+        List of issue dicts with {'severity': 'WARNING'|'ERROR', 'message': str}
+    """
+    issues = []
+
+    def _to_num(x):
+        try:
+            if x is None or x == "":
+                return 0.0
+            return float(str(x).replace(',', '').replace('₹', ''))
+        except:
+            return 0.0
+
+    # Extract values
+    gross = _to_num(merged_data.get('gross_salary'))
+    basic = _to_num(merged_data.get('basic_salary'))
+    hra = _to_num(merged_data.get('hra_received'))
+    home_loan_int = _to_num(merged_data.get('home_loan_interest'))
+    tds = _to_num(merged_data.get('tds_paid'))
+
+    # CHECK 1: Detect monthly vs annual mismatch
+    # If we have a Form 16 (annual), payslip gross should be ~1/12 of Form 16 gross
+    has_form16 = merged_data.get('has_form16') or merged_data.get('_doc_type') == 'form16'
+
+    if not has_form16 and gross < 240000 and basic < 100000 and hra < 50000:
+        # Likely monthly values - warning but not error (normalization should have fixed this)
+        issues.append({
+            "severity": "WARNING",
+            "message": f"Gross salary (₹{gross:,.0f}) appears to be monthly. Should be annualized.",
+            "field": "gross_salary"
+        })
+
+    # CHECK 2: Detect if gross salary is grossly wrong (₹0 is suspicious)
+    if gross < 240000 and not (merged_data.get('filing_category') == 'free' or merged_data.get('referrer_name')):
+        # < 20K/month baseline (probably wrong)
+        issues.append({
+            "severity": "WARNING",
+            "message": f"Gross salary (₹{gross:,.0f}/year) seems very low. Please verify.",
+            "field": "gross_salary"
+        })
+
+    # CHECK 3: TDS sanity check
+    if gross > 0 and tds > gross:
+        issues.append({
+            "severity": "WARNING",
+            "message": f"TDS paid (₹{tds:,.0f}) exceeds gross salary (₹{gross:,.0f}). Please verify.",
+            "field": "tds_paid"
+        })
+
+    # CHECK 4: HRA sanity check
+    if basic > 0 and hra > basic:
+        issues.append({
+            "severity": "WARNING",
+            "message": f"HRA (₹{hra:,.0f}) exceeds basic salary (₹{basic:,.0f}). Please verify.",
+            "field": "hra_received"
+        })
+
+    # CHECK 5: Home loan interest cap check (₹2L max per income tax)
+    if home_loan_int > 200000:
+        issues.append({
+            "severity": "WARNING",
+            "message": f"Home loan interest (₹{home_loan_int:,.0f}) exceeds ₹2,00,000 limit. Only ₹2L will be deducted.",
+            "field": "home_loan_interest"
+        })
+
+    # CHECK 6: Negative values check
+    negative_fields = {
+        'gross_salary': gross,
+        'basic_salary': basic,
+        'hra_received': hra,
+        'home_loan_interest': home_loan_int,
+        'tds_paid': tds
+    }
+    for field, value in negative_fields.items():
+        if value < 0:
+            issues.append({
+                "severity": "ERROR",
+                "message": f"{field} is negative (₹{value:,.0f}). This is invalid.",
+                "field": field
+            })
+
+    return issues
+
+
+def _build_json_arrays_from_extractions(doc_type, extractions):
+    """Build JSON arrays for document types that can have multiple instances.
+
+    CRITICAL FIX: When multiple documents of the same type are extracted (e.g., 2 school fee
+    PDFs, 3 insurance policies), we need to track each one individually. This function
+    builds JSON arrays so _aggregate_investments can properly sum and deduplicate.
+
+    Args:
+        doc_type: The document type being extracted (school, insurance, homeloan, etc.)
+        extractions: List of extracted data dicts
+
+    Returns:
+        Dict with JSON array fields (e.g., {"school_fees_json": "[{...}, {...}]"})
+    """
+    import json
+    result = {}
+
+    if doc_type == "school" and len(extractions) > 0:
+        # Collect all school fee documents into a JSON array
+        schools = []
+        for i, ext in enumerate(extractions):
+            school_entry = {
+                "receipt_number": f"school_{i+1}",  # Auto-generate if not present
+                "school_fees": ext.get("school_fees", 0),
+                "school_name": ext.get("school_name", f"School {i+1}"),
+                "source_file": ext.get("_source_filename", f"document_{i+1}"),
+                "confidence": ext.get("_confidence", 0)
+            }
+            # Add any additional school fields if present
+            for k in ["student_name", "class", "academic_year", "fee_type"]:
+                if k in ext and ext[k]:
+                    school_entry[k] = ext[k]
+            schools.append(school_entry)
+
+        if schools:
+            result["school_fees_json"] = json.dumps(schools)
+            print(f"[EXTRACT] Built school_fees_json with {len(schools)} documents")
+
+    elif doc_type == "insurance" and len(extractions) > 0:
+        # Collect all insurance policies into a JSON array
+        policies = []
+        for i, ext in enumerate(extractions):
+            policy_entry = {
+                "policy_no": ext.get("policy_no", f"policy_{i+1}"),
+                "type": ext.get("type", "life"),
+                "coverage_type": ext.get("coverage_type", ""),
+                "premium": ext.get("premium_amount", ext.get("premium", 0)),
+                "source_file": ext.get("_source_filename", f"document_{i+1}"),
+                "confidence": ext.get("_confidence", 0)
+            }
+            # Add any additional insurance fields
+            for k in ["insurer_name", "premium_frequency", "sum_assured", "maturity_date"]:
+                if k in ext and ext[k]:
+                    policy_entry[k] = ext[k]
+            policies.append(policy_entry)
+
+        if policies:
+            result["insurance_policies_json"] = json.dumps(policies)
+            print(f"[EXTRACT] Built insurance_policies_json with {len(policies)} documents")
+
+    elif doc_type == "homeloan" and len(extractions) > 0:
+        # Collect all home loan documents into a JSON array
+        loans = []
+        for i, ext in enumerate(extractions):
+            loan_entry = {
+                "policy_no": ext.get("policy_no", ext.get("account_number", f"loan_{i+1}")),
+                "home_loan_interest": ext.get("home_loan_interest", ext.get("interest", 0)),
+                "home_loan_principal": ext.get("home_loan_principal", ext.get("principal", 0)),
+                "bank_name": ext.get("bank_name", ""),
+                "source_file": ext.get("_source_filename", f"document_{i+1}"),
+                "confidence": ext.get("_confidence", 0)
+            }
+            loans.append(loan_entry)
+
+        if loans:
+            result["home_loans_json"] = json.dumps(loans)
+            print(f"[EXTRACT] Built home_loans_json with {len(loans)} documents")
+
+    elif doc_type == "donation" and len(extractions) > 0:
+        # Collect all donation receipts into a JSON array
+        donations = []
+        for i, ext in enumerate(extractions):
+            donation_entry = {
+                "receipt_number": ext.get("receipt_number", f"donation_{i+1}"),
+                "donation_amount": ext.get("donation_amount", ext.get("amount", 0)),
+                "organization_name": ext.get("organization_name", ""),
+                "donation_date": ext.get("donation_date", ""),
+                "source_file": ext.get("_source_filename", f"document_{i+1}"),
+                "confidence": ext.get("_confidence", 0)
+            }
+            donations.append(donation_entry)
+
+        if donations:
+            result["donations_json"] = json.dumps(donations)
+            print(f"[EXTRACT] Built donations_json with {len(donations)} documents")
+
+    return result
+
+
 def _aggregate_investments(merged_data):
     """Aggregate multi-entry investment JSON blobs into individual sheet columns.
 
@@ -518,6 +729,32 @@ def _aggregate_investments(merged_data):
             aggregates['medical_self'] = sum_health_self
         if sum_health_parents > 0:
             aggregates['medical_parents'] = sum_health_parents
+
+    # ===== School Fees =====
+    # CRITICAL FIX: Aggregate school fees from multiple documents
+    sch = merged_data.get('school_fees_json')
+    if sch:
+        try:
+            schools = json.loads(sch) if isinstance(sch, str) else sch
+        except Exception:
+            schools = sch if isinstance(sch, list) else []
+
+        totals, dupes = _deduplicate_and_sum_array(
+            schools or [],
+            'receipt_number',  # School fees may have receipt numbers
+            ['school_fees', 'fees', 'fee_amount', 'tuition_fees']
+        )
+
+        if dupes:
+            print(f"[AGG] School fees: {len(dupes)} duplicates detected and merged")
+            for d in dupes:
+                print(f"  Duplicate school receipt {d.get('original', {}).get('receipt_number', 'N/A')}")
+
+        total_fees = (totals.get('school_fees', 0) + totals.get('fees', 0) +
+                     totals.get('fee_amount', 0) + totals.get('tuition_fees', 0))
+        if total_fees > 0:
+            aggregates['school_fees'] = total_fees
+            print(f"[AGG] School fees aggregated: ₹{total_fees:,.0f} from {len(schools or [])} documents")
 
     # ===== Donations =====
     don = merged_data.get('donations_json')
@@ -651,6 +888,9 @@ def extract():
                 print(f"[EXTRACT] {filename}: confidence={result['confidence']}, "
                       f"pages={result['metadata'].get('pages_processed', 1)}")
 
+                # [DIAGNOSTIC] Log extraction output per document
+                print(f"[EXTRACT_OUTPUT] {filename} => gross_salary={extracted_data.get('gross_salary', 'N/A')} | basic_salary={extracted_data.get('basic_salary', 'N/A')} | hra_received={extracted_data.get('hra_received', 'N/A')}")
+
                 return (url, extracted_data, None)
 
             except Exception as e:
@@ -686,6 +926,82 @@ def extract():
         merged = ai_service.merge_extractions(extractions)
         conflicts = merged.pop('_merge_conflicts', [])
 
+        # FIX: Preserve Form16 annual values when processing Payslip separately
+        # When only Payslip is extracted (separate API call from Form16), preserve the Form16
+        # values already in the sheet to avoid monthly values overwriting annual values
+        print(f"[EXTRACT_DEBUG] row={row is not None}, len(extractions)={len(extractions)}, doc_type={extractions[0].get('_doc_type') if extractions else 'N/A'}")
+
+        if row and len(extractions) == 1 and extractions[0].get('_doc_type', '').lower() == 'payslip':
+            # This is a payslip-only extraction. Check if sheet has Form16 annual values
+            sheet_form16_fields = {'gross_salary', 'basic_salary', 'hra_received', 'pf_employee'}
+            for field in sheet_form16_fields:
+                sheet_val = row.get(field, 0)
+                merged_val = merged.get(field, 0)
+
+                # Try to convert to numbers for comparison
+                try:
+                    sheet_num = float(sheet_val) if sheet_val else 0
+                    merged_num = float(merged_val) if merged_val else 0
+
+                    # If sheet has much larger value (likely annual from Form16) and merged has smaller
+                    # (likely monthly from payslip), keep the sheet value
+                    if sheet_num > 0 and merged_num > 0:
+                        ratio = sheet_num / max(merged_num, 1)
+                        if ratio > 10:  # Likely annual vs monthly
+                            merged[field] = sheet_num
+                            print(f"[EXTRACT_PRESERVE] Kept sheet value for {field}: {sheet_num} (annual) over {merged_num} (monthly)")
+                except (ValueError, TypeError):
+                    pass
+
+        # CRITICAL FIX: Build JSON arrays for documents that can have multiples
+        # This ensures we can track individual receipts/documents and aggregate them properly
+        try:
+            json_fields_built = _build_json_arrays_from_extractions(doc_type, extractions)
+            if json_fields_built:
+                merged.update(json_fields_built)
+                print(f"[EXTRACT] Built JSON arrays: {list(json_fields_built.keys())}")
+        except Exception as e:
+            print(f"[EXTRACT] Warning: Could not build JSON arrays: {e}")
+
+        # ══════════════════════════════════════════════════════════════════════════════════
+        # CRITICAL: Normalize final merged dataset (NEW STEP in pipeline)
+        # This applies annualization and validates the final values before storage
+        # ══════════════════════════════════════════════════════════════════════════════════
+        try:
+            print(f"[EXTRACT] Normalizing final merged dataset...")
+            primary_doc_type = merged.get('_doc_type', doc_type)
+
+            # Call normalize_extractions on the final merged result
+            normalized_result = normalization_service.normalize_extractions(
+                [merged],  # Pass merged data as single document
+                [primary_doc_type]  # Primary document type for annualization context
+            )
+
+            normalized_data = normalized_result.get("normalized", {})
+            print(f"[EXTRACT] Normalization complete. "
+                  f"Confidence: {normalized_result.get('extraction_confidence', 0)}")
+
+            # Log annualization for salary fields
+            assumptions = normalized_result.get("assumptions", [])
+            if assumptions:
+                print(f"[EXTRACT] Assumptions: {assumptions}")
+
+            # [DEBUG] Log normalized values
+            print(f"[NORMALIZE_DEBUG] BEFORE normalized.update(): gross_salary={merged.get('gross_salary')}")
+            print(f"[NORMALIZE_DEBUG] normalized_data contains: gross_salary={normalized_data.get('gross_salary')}")
+
+            # Update merged with normalized values
+            merged.update(normalized_data)
+            print(f"[NORMALIZE_DEBUG] AFTER normalized.update(): gross_salary={merged.get('gross_salary')}")
+
+            # Preserve metadata
+            merged['_normalization_assumptions'] = assumptions
+
+        except Exception as e:
+            print(f"[EXTRACT] WARNING: Normalization failed (non-blocking): {e}")
+            # Non-blocking: continue with unnormalized data
+            pass
+
         if conflicts:
             print(f"[EXTRACT][{doc_type}] conflicts detected: {conflicts}")
 
@@ -720,6 +1036,20 @@ def extract():
 
         # Clean extraction (existing validation)
         merged = ai_service.clean_extraction(merged)
+
+        # [DIAGNOSTIC] Log before sheet save
+        print(f"[BEFORE_SAVE] gross_salary={merged.get('gross_salary', 'N/A')} | basic_salary={merged.get('basic_salary', 'N/A')} | hra_received={merged.get('hra_received', 'N/A')}")
+
+        # [CRITICAL DEBUG] Check if merged values are annual or monthly
+        try:
+            g_sal = float(merged.get('gross_salary', 0)) if merged.get('gross_salary') else 0
+            if g_sal > 0:
+                if g_sal < 240000:
+                    print(f"[ALERT] MONTHLY value detected! gross_salary={g_sal} (should be ~3.1M annual)")
+                else:
+                    print(f"[OK] ANNUAL value: gross_salary={g_sal}")
+        except:
+            pass
 
         # Save to Sheets
         sheets_service.update_row(row, merged)
@@ -852,6 +1182,9 @@ def submit():
 
         print(f"[SUBMIT] Data received: {list(data.keys())}", flush=True)
 
+        # [DIAGNOSTIC] Log form submission input
+        print(f"[SUBMIT_INPUT] gross_salary={data.get('gross_salary', 'N/A')} | basic_salary={data.get('basic_salary', 'N/A')} | hra_received={data.get('hra_received', 'N/A')}")
+
         submission_id = data.get("submission_id")
         print(f"[SUBMIT] submission_id: {submission_id}")
         if not submission_id:
@@ -896,14 +1229,45 @@ def submit():
         sheets_service.update_row(row, data)
         print(f"[SUBMIT] Update complete")
 
+        # ══════════════════════════════════════════════════════════════════════════════════
         # Merge sheet row (has OCR-extracted investment data) with submitted form data
+        # CRITICAL: Protect extracted salary fields from form override
+        # ══════════════════════════════════════════════════════════════════════════════════
+        EXTRACTED_SALARY_FIELDS = {
+            'gross_salary', 'basic_salary', 'hra_received', 'tds_paid',
+            'pf_employee', 'pf_employer', 'professional_tax'
+        }
+
         existing_rec = sheets_service.check_approval(submission_id)
         if existing_rec:
-            # Sheet data as base; submitted form fields override
-            merged_data = {**existing_rec, **data}
+            # Start with sheet data as base (contains extracted values)
+            merged_data = dict(existing_rec)
+
+            # Selectively override with form data
+            # Only allow form to override fields that either:
+            # (1) Weren't extracted (not in EXTRACTED_SALARY_FIELDS), OR
+            # (2) Weren't present in the sheet (new fields)
+            for key, value in data.items():
+                if key in EXTRACTED_SALARY_FIELDS:
+                    # This is an extracted salary field
+                    sheet_has_value = existing_rec.get(key) is not None
+                    if sheet_has_value:
+                        # Keep the sheet (extracted) value, don't override with form
+                        print(f"[SUBMIT_PROTECT] Keeping extracted {key}={existing_rec[key]} "
+                              f"(form submitted: {value}, form override blocked)")
+                    else:
+                        # Sheet doesn't have this field, allow form to populate it
+                        merged_data[key] = value
+                else:
+                    # Non-salary field, allow form to override
+                    merged_data[key] = value
         else:
             merged_data = data
+
         print(f"[SUBMIT] merged_data keys: {list(merged_data.keys())}")
+
+        # [DIAGNOSTIC] Log after merge
+        print(f"[AFTER_MERGE] gross_salary={merged_data.get('gross_salary', 'N/A')} | basic_salary={merged_data.get('basic_salary', 'N/A')} | hra_received={merged_data.get('hra_received', 'N/A')}")
 
         # [OK] Aggregate multi-entry JSON fields with duplicate detection
         try:
@@ -935,6 +1299,18 @@ def submit():
                               f"{validation_report.get('errors')}")
         else:
             print("[VALIDATION] No validation report from extraction (normal if not Form16/Payslip)")
+
+        # [OK] PRE-TAX VALIDATION: Detect extraction issues before calculation
+        # This layer catches monthly/annual mismatches, missing critical fields, etc.
+        try:
+            validation_issues = _validate_before_tax_calculation(merged_data)
+            if validation_issues:
+                for issue in validation_issues:
+                    print(f"[VALIDATION] {issue['severity']}: {issue['message']}")
+                    if issue['severity'] == 'ERROR':
+                        logger.error(f"[VALIDATION] {issue['message']}")
+        except Exception as ve:
+            print(f"[VALIDATION] Pre-tax validation error (non-blocking): {ve}")
 
         # [OK] TAX CALC — deterministic engine is the source of truth;
         #    AI enrichment (assumptions, notes) is optional overlay.

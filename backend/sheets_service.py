@@ -708,6 +708,9 @@ def save_calculation_by_row(row, calc):
     # Key intermediate values (HRA, home loan cap, TDS)
     set_cell("tds_paid", extract_numeric(calc, "tds_paid", "compatibility_summary.tds_paid"))
     set_cell("hra_exempt_actual", extract_numeric(calc, "hra_exempt_actual", "compatibility_summary.hra_exempt_actual", "section_10_exemptions.hra.hra_exemption"))
+    # CRITICAL FIX: Preserve original home_loan_interest from input (extracted from documents)
+    set_cell("home_loan_interest", extract_numeric(calc, "home_loan_interest", "compatibility_summary.home_loan_interest"))
+    # Also save the capped value used in calculation
     set_cell("home_loan_interest_allowed", extract_numeric(calc, "home_loan_interest_allowed", "compatibility_summary.home_loan_interest_allowed"))
 
     # NEW regime
@@ -745,8 +748,8 @@ def save_calculation_by_row(row, calc):
     set_cell("variant_c_refund_new", extract_numeric(calc, "variant_c_refund_new", "compatibility_summary.variant_c_refund_new", "refund_new_c"))
 
     # Combined formulas (Regime Comparison + Quotes Comparison)
-    set_cell("regime_comparison", f'="Old Regime: "&CF{row}&" | New Regime: "&BV{row}')
-    set_cell("quotes_comparison", f'="Quote 1: "&CF{row}&" | Quote 2: "&CH{row}&" | Quote 3: "&CI{row}')
+    set_cell("regime_comparison", f'="Old Regime: "&BY{row}&" | New Regime: "&BV{row}')
+    set_cell("quotes_comparison", f'="OLD A: "&BY{row}&" | OLD B: "&CN{row}&" | OLD C: "&CO{row}&" | NEW A: "&BV{row}&" | NEW B: "&CP{row}&" | NEW C: "&CQ{row}')
 
     # Deductions
     set_cell("sec_80c", extract_numeric(calc, "deductions_80.sec_80c", "sec_80c", "compatibility_summary.sec_80c"))

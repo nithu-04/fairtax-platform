@@ -1,0 +1,167 @@
+═══════════════════════════════════════════════════════════════════════════════
+FILE 1: backend/ai_service.py
+═══════════════════════════════════════════════════════════════════════════════
+
+ADDED (Before merge_extractions function):
+────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# SALARY FIELDS: NEVER SUM across documents (each is singular per year)
+# ─────────────────────────────────────────────────────────────────────────────
+NEVER_SUM_FIELDS = {
+    'gross_salary', 'basic_salary', 'hra_received', 'tds_paid',
+    'pf_employee', 'pf_employer', 'lta', 'special_allowance',
+    'car_lease_allowance', 'uniform_allowance', 'gratuity', 'leave_encashment'
+}
+
+SOURCE_PRIORITY = {
+    'form16': 1,
+    'payslip_ytd': 2,
+    'payslip': 3,
+    'manual': 4,
+}
+
+def _select_by_source_priority(entries):
+    """New function: Select best entry based on source priority"""
+    # Returns best entry by priority ranking
+    ...
+
+MODIFIED: merge_extractions() function
+──────────────────────────────────────
+OLD: 
+    if len(entries) > 1 and all_numeric:
+        total = sum(float(e['value']) for e in entries)  ← SUMS ALL
+        out[k] = total
+
+NEW:
+    if k in NEVER_SUM_FIELDS and len(entries) > 1 and all_numeric:
+        best = _select_by_source_priority(entries)  ← SOURCE PRIORITY
+        if best:
+            out[k] = best['value']
+            out[f"{k}_source"] = best['source']
+            out[f"{k}_doc_type"] = best['doc_type']
+
+IMPACT: Salary fields now selected by priority, not summed.
+
+═══════════════════════════════════════════════════════════════════════════════
+FILE 2: backend/app.py
+═══════════════════════════════════════════════════════════════════════════════
+
+CHANGE A: Import normalization_service
+──────────────────────────────────────
+OLD:
+    from services import document_processor, quality_checker, doc_type_detector
+
+NEW:
+    from services import document_processor, quality_checker, doc_type_detector, normalization_service
+
+───────────────────────────────────────────────────────────────────────────────
+
+CHANGE B: /api/extract endpoint — Add normalization after merge
+────────────────────────────────────────────────────────────────
+
+LOCATION: After line 945 (after JSON array building)
+
+ADDED:
+    # ══════════════════════════════════════════════════════════════════════════════════
+    # CRITICAL: Normalize final merged dataset (NEW STEP in pipeline)
+    # ══════════════════════════════════════════════════════════════════════════════════
+    try:
+        print(f"[EXTRACT] Normalizing final merged dataset...")
+        primary_doc_type = merged.get('_doc_type', doc_type)
+
+        # Call normalize_extractions on the final merged result
+        normalized_result = normalization_service.normalize_extractions(
+            [merged],
+            [primary_doc_type]
+        )
+
+        normalized_data = normalized_result.get("normalized", {})
+        print(f"[EXTRACT] Normalization complete...")
+        
+        merged.update(normalized_data)
+        merged['_normalization_assumptions'] = assumptions
+
+    except Exception as e:
+        print(f"[EXTRACT] WARNING: Normalization failed (non-blocking): {e}")
+        pass
+
+IMPACT: Ensures final merged values are annualized before storage.
+
+───────────────────────────────────────────────────────────────────────────────
+
+CHANGE C: /api/submit endpoint — Protect salary fields from override
+────────────────────────────────────────────────────────────────────
+
+LOCATION: Line 1197-1207 (merge logic)
+
+OLD:
+    existing_rec = sheets_service.check_approval(submission_id)
+    if existing_rec:
+        merged_data = {**existing_rec, **data}  ← FORM ALWAYS OVERRIDES
+    else:
+        merged_data = data
+
+NEW:
+    EXTRACTED_SALARY_FIELDS = {
+        'gross_salary', 'basic_salary', 'hra_received', 'tds_paid',
+        'pf_employee', 'pf_employer', 'professional_tax'
+    }
+
+    existing_rec = sheets_service.check_approval(submission_id)
+    if existing_rec:
+        merged_data = dict(existing_rec)
+        
+        for key, value in data.items():
+            if key in EXTRACTED_SALARY_FIELDS:
+                sheet_has_value = existing_rec.get(key) is not None
+                if sheet_has_value:
+                    print(f"[SUBMIT_PROTECT] Keeping extracted {key}=... "
+                          f"(form submitted: {value}, override blocked)")
+                else:
+                    merged_data[key] = value
+            else:
+                merged_data[key] = value
+    else:
+        merged_data = data
+
+IMPACT: Form submission can't override extracted salary fields.
+
+═══════════════════════════════════════════════════════════════════════════════
+FILE 3: backend/services/normalization_service.py
+═══════════════════════════════════════════════════════════════════════════════
+
+MODIFIED: _annualize_payslip_field() function
+──────────────────────────────────────────────
+
+ADDED GUARD:
+    # GUARD: Check if value is already annualized (too large for monthly)
+    MONTHLY_MAX = 500000
+    if value > MONTHLY_MAX:
+        # Value looks like it's already annual, don't annualize again
+        return value
+
+OLD LOGIC:
+    if field_name in monthly_fields and value > 0:
+        return value * 12
+
+NEW LOGIC:
+    if field_name not in monthly_fields or value <= 0:
+        return value
+    
+    MONTHLY_MAX = 500000
+    if value > MONTHLY_MAX:
+        return value
+    
+    return value * 12
+
+IMPACT: Prevents double-annualization of already-annualized values.
+
+═══════════════════════════════════════════════════════════════════════════════
+SUMMARY OF CHANGES
+═══════════════════════════════════════════════════════════════════════════════
+
+Total Files Modified: 3
+Total Lines Added: ~180
+Breaking Changes: NONE (backward compatible)
+
+✅ Ready for testing

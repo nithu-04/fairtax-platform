@@ -58,6 +58,48 @@ def _compute_checksum(data, fields):
     return hashlib.md5(checksum_str.encode()).hexdigest()
 
 
+def _annualize_payslip_field(field_name, value, doc_type):
+    """
+    Annualize monthly payslip values.
+
+    Payslip documents contain monthly amounts that must be multiplied by 12
+    for annual tax calculation.
+
+    GUARD: Prevents double-annualization. If value looks already-annualized
+    (exceeds reasonable monthly maximum), skip multiplication.
+
+    Args:
+        field_name: Field name (e.g., 'gross_salary')
+        value: Extracted value
+        doc_type: Document type (e.g., 'payslip')
+
+    Returns:
+        Annualized value if applicable, otherwise original value
+    """
+    if doc_type != 'payslip' or not isinstance(value, (int, float)):
+        return value
+
+    # Fields that are MONTHLY in payslips and must be annualized
+    monthly_fields = {
+        'gross_salary', 'basic_salary', 'hra_received', 'lta',
+        'special_allowance', 'car_lease_allowance', 'uniform_allowance'
+    }
+
+    if field_name not in monthly_fields or value <= 0:
+        return value
+
+    # GUARD: Check if value is already annualized (too large for monthly)
+    # Reasonable monthly max for Indian salaries: 500,000 (30L/month is extreme)
+    # If value exceeds this, it's probably already annual
+    MONTHLY_MAX = 500000
+    if value > MONTHLY_MAX:
+        # Value looks like it's already annual, don't annualize again
+        return value
+
+    # Safe to annualize: multiply monthly value by 12
+    return value * 12
+
+
 def normalize_extractions(extractions_list, doc_types_list):
     """
     Normalize and aggregate multiple document extractions.
@@ -156,6 +198,7 @@ def normalize_extractions(extractions_list, doc_types_list):
         all_field_keys.update(ext_data["data"].keys())
 
     # Process each field
+    annualized_fields = {}  # Track which fields were annualized for assumptions
     for field_name in all_field_keys:
         field_values = []
 
@@ -177,8 +220,17 @@ def normalize_extractions(extractions_list, doc_types_list):
 
         # Single value: use it
         if len(field_values) == 1:
-            normalized[field_name] = field_values[0]["value"]
-            conf = field_values[0]["confidence"]
+            fv = field_values[0]
+            value = fv["value"]
+
+            # ANNUALIZATION: If payslip, multiply monthly fields by 12
+            original_value = value
+            value = _annualize_payslip_field(field_name, value, fv["doc_type"])
+            if value != original_value and fv["doc_type"] == "payslip":
+                annualized_fields[field_name] = (original_value, value)
+
+            normalized[field_name] = value
+            conf = fv["confidence"]
             all_confidences.append(conf)
             if conf >= 0.8:
                 high_confidence_fields.append(field_name)
@@ -216,13 +268,24 @@ def normalize_extractions(extractions_list, doc_types_list):
         if numeric_values and should_sum:
             # SUM: Multiple documents of same type with additive fields
             total = sum(fv["value"] for fv in numeric_values if isinstance(fv["value"], (int, float)))
+            doc_type = numeric_values[0]["doc_type"] if numeric_values else "unknown"
+
+            # ANNUALIZATION: If summing payslips, annualize each value first
+            if doc_type == "payslip":
+                annualized_values = []
+                for fv in numeric_values:
+                    if isinstance(fv["value"], (int, float)):
+                        annualized = _annualize_payslip_field(field_name, fv["value"], doc_type)
+                        annualized_values.append(annualized)
+                        if annualized != fv["value"]:
+                            annualized_fields[f"{field_name}_payslip_{numeric_values.index(fv)}"] = (fv["value"], annualized)
+                total = sum(annualized_values)
+
             normalized[field_name] = int(total) if isinstance(total, float) and total.is_integer() else total
 
             # Log if different values (conflict)
             unique_vals = set(str(fv["value"]) for fv in numeric_values)
             if len(unique_vals) > 1:
-                # Get the document type for conflict logging
-                doc_type = numeric_values[0]["doc_type"] if numeric_values else "unknown"
                 conflicts.append({
                     "field": field_name,
                     "type": f"multi_{doc_type}_aggregate",
@@ -236,7 +299,15 @@ def normalize_extractions(extractions_list, doc_types_list):
         # For mixed numeric: use highest confidence
         elif numeric_values:
             best = max(numeric_values, key=lambda x: x["confidence"])
-            normalized[field_name] = best["value"]
+            value = best["value"]
+
+            # ANNUALIZATION: If payslip, multiply monthly fields by 12
+            original_value = value
+            value = _annualize_payslip_field(field_name, value, best["doc_type"])
+            if value != original_value and best["doc_type"] == "payslip":
+                annualized_fields[field_name] = (original_value, value)
+
+            normalized[field_name] = value
 
             # Conflict if values differ significantly
             if len(numeric_values) > 1:
@@ -272,12 +343,20 @@ def normalize_extractions(extractions_list, doc_types_list):
     assumptions = []
 
     # Check for payslips (monthly amounts) that need annualization
+    # CRITICAL FIX: Annualization now happens IN THIS FUNCTION (above), not in tax engine
+    has_annualized = bool(annualized_fields)
     for ext_data in extractions_data:
         if ext_data["doc_type"] == "payslip":
             monthly_fields = {"gross_salary", "basic_salary", "hra_received", "special_allowance"}
             has_monthly = any(k in ext_data["data"] for k in monthly_fields)
             if has_monthly:
-                assumptions.append("Payslip amounts are monthly; will be annualized (×12) in tax calculation")
+                if has_annualized:
+                    assumptions.append("Payslip amounts were MONTHLY; annualized by multiplying by 12")
+                    # Log specific annualizations for auditor
+                    for field, (monthly_val, annual_val) in annualized_fields.items():
+                        assumptions.append(f"  • {field}: {monthly_val:,.0f}/month → {annual_val:,.0f}/year")
+                else:
+                    assumptions.append("Payslip detected but no monthly fields required annualization")
                 break
 
     # Multi-document aggregation logging
