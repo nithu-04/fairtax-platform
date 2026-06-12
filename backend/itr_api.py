@@ -257,17 +257,29 @@ def extract_itr_data():
         if len(all_results) == 1:
             result = all_results[0]
         else:
-            # Multiple files: merge results
-            print(f"[ITR_EXTRACT] Processing {len(all_results)} files, merging results...")
-            merged_data = {}
-            merged_confidence = 0
+            # Multiple files: merge results using ai_service merge logic
+            print(f"[ITR_EXTRACT] Processing {len(all_results)} files, merging with source priority...")
+
+            # Build extraction list with metadata for merge
+            extractions_for_merge = []
+            for idx, res in enumerate(all_results, 1):
+                if res.get('success') and res.get('data'):
+                    data = res.get('data', {})
+                    # Add doc_type and confidence metadata for merge logic
+                    data['_doc_type'] = doc_type  # All files were processed with same doc_type
+                    data['_confidence'] = res.get('confidence', 0)
+                    extractions_for_merge.append(data)
+
+            # Use ai_service merge_extractions which handles salary field priority correctly
+            import ai_service
+            merged_data = ai_service.merge_extractions(extractions_for_merge)
+            merged_data.pop('_merge_conflicts', None)  # Remove conflict metadata
+
+            merged_confidence = max((r.get('confidence', 0) for r in all_results if r.get('success')), default=0)
             merged_metadata = {'files_processed': len(all_results), 'individual_results': []}
 
             for idx, res in enumerate(all_results, 1):
-                if res.get('success') and res.get('data'):
-                    # Merge data from each file (later files override earlier ones for same fields)
-                    merged_data.update(res.get('data', {}))
-                    merged_confidence = max(merged_confidence, res.get('confidence', 0))
+                if res.get('success'):
                     merged_metadata['individual_results'].append({
                         'file': idx,
                         'success': True,
