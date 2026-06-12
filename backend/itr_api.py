@@ -303,7 +303,10 @@ def extract_itr_data():
         # 🔥 CRITICAL FIX: NORMALIZE & ANNUALIZE EXTRACTED DATA
         # This ensures payslip monthly values are converted to annual
         # ═══════════════════════════════════════════════════════════
+        print(f"[ITR_EXTRACT_DEBUG] result.success={result.get('success')}, has_data={bool(result.get('data'))}, data_keys={list(result.get('data', {}).keys())[:5]}")
+
         if result.get('success') and result.get('data'):
+            print(f"[ITR_EXTRACT_DEBUG] ENTERING NORMALIZATION BLOCK")
             try:
                 from services import normalization_service
                 extracted_data = result.get('data', {})
@@ -384,6 +387,8 @@ def extract_itr_data():
         elapsed = time.time() - start_time
         if result['success']:
             logger.info(f"[ITR_EXTRACT] Success in {elapsed:.2f}s")
+            # FINAL DEBUG: Log what we're returning
+            print(f"[ITR_EXTRACT_FINAL] Returning gross_salary={result.get('data', {}).get('gross_salary')}, doc_type={doc_type}")
             return jsonify(result), 200
         else:
             # Extraction failed — return 200 (no CORS issues) but success:false
