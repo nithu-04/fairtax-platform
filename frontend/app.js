@@ -1,4 +1,6 @@
-﻿const API = 'https://fairtax-backend.onrender.com/api'; // TEMP: always live backend for testing
+﻿const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:5000/api'
+  : 'https://fairtax-backend.onrender.com/api';
 
 let currentStep = 1;
 const TOTAL = 7;

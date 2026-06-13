@@ -98,14 +98,35 @@ PAYSLIP_TEXT_EXTRACTION_PROMPT = """You are an Indian payroll expert extracting 
 ━━━ STEP 1 — IDENTIFY PAYSLIP FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 YTD / ANNUAL PAYSLIP  (set is_ytd = true)
-  Signs: Multiple month columns (Apr, May, Jun … or Month-1, Month-2 …)
-         PLUS a rightmost "Grand Total" / "Annual Total" / "Total" / "YTD" column.
-  Rule:  Extract ONLY from the rightmost Grand Total column.
-         IGNORE all individual month columns — they are partial figures.
+
+  TYPE A — Multi-month layout:
+    Columns: Apr | May | Jun | … | Grand Total / Annual / YTD
+    Rule: Extract ONLY from the Grand Total / YTD column (rightmost).
+
+  TYPE B — Standard / Actual / YTD layout  ← VERY COMMON IN INDIA
+    Each row has THREE numbers:
+      Standard (or Scheduled) | Actual | YTD
+      ─────────────────────────  ──────   ───────────────────────────────
+      budgeted monthly amount    THIS     cumulative year-to-date total
+                                 month    ← ALWAYS USE THIS COLUMN
+
+    Signs: Column headers containing "Standard", "Actual", "YTD" or "Year to Date"
+    Rule: Extract ONLY the YTD column — the RIGHTMOST number on each earnings/deduction row.
+
+    ⚠ CRITICAL EXAMPLE (Type B payslip):
+       Text row:  "BASIC    99,133.33    99,133.00    1,168,656.00"
+                   Standard(monthly)  Actual(March)  YTD(annual) ← USE THIS
+       → basic_salary = 1168656    ← NOT 99133 (that is the monthly Actual)
+
+    ⚠ CRITICAL EXAMPLE (Type B deductions):
+       Text row:  "INCOME TAX DEDUCTION    42,744.00    42,744.00    607,794.00"
+                   Standard               Actual(March) YTD(annual) ← USE THIS
+       → tds_paid = 607794    ← NOT 42744
 
 MONTHLY PAYSLIP  (set is_ytd = false)
-  Signs: A single month heading (e.g. "March 2026") with ONE amount column.
-  Rule:  Extract that single month's figures. These will be annualized (×12) by the system.
+  Signs: A single month heading (e.g. "March 2026") with ONE amount column per row.
+         No YTD / cumulative column present.
+  Rule:  Extract that single month's figures. The system will annualize (×12).
 
 ━━━ STEP 2 — TABLE STRUCTURE RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -196,8 +217,9 @@ Return ONLY valid JSON. All monetary values must be whole integers:
 }
 
 ABSOLUTE RULES:
-• is_ytd = true only if a multi-month Grand Total column was clearly present
-• For YTD payslips: use ONLY the Grand Total column — never an individual month column
+• is_ytd = true if ANY YTD / Grand Total column is present (Type A or Type B)
+• For Type B (Standard/Actual/YTD): EVERY field must come from the YTD column — the RIGHTMOST number on each row. NEVER use the Actual (middle) column.
+• For Type A (multi-month): use ONLY the Grand Total / YTD column — never individual month columns
 • gross_salary must be from the TOTAL EARNINGS row — not CTC, not net pay
 • tds_paid must come from the DEDUCTIONS section — never from an earnings row
 • Use 0 for any field not found — NEVER guess or estimate
@@ -748,6 +770,58 @@ def _sum_all_hra_from_text(text):
     return None  # 0 or 1 row — leave to AI
 
 
+def _deterministic_ytd_override(text, result):
+    """
+    For Standard/Actual/YTD payslips the AI often reads the Actual (monthly)
+    column instead of the rightmost YTD (annual) column.
+
+    Strategy: for each payslip field, find the first matching text line and
+    take the LAST salary-scale number (≥ 1000) on that line.
+    - Standard/Actual/YTD row:  [99133, 99133, 1168656]  → last = 1168656 ✓
+    - Single-value monthly row: [99133]                  → last = 99133  ✓
+
+    Override only when the deterministic value is ≥ 1.5× the AI value
+    (clear evidence the AI read a smaller, wrong column) or when AI returned 0.
+    """
+    if not text:
+        return result
+
+    FIELD_LABELS = {
+        'basic_salary':        [r'\bbasic\b(?! tax)', r'basic\s+salary', r'basic\s+pay', r'basic\s+wages'],
+        'hra_received':        [r'\bhra\b', r'house\s+rent\s+allowance'],
+        'special_allowance':   [r'special\s+allowance', r'special\s+pay\b', r'non-fbp\s+other', r'other\s+allowance\b'],
+        'lta':                 [r'\blta\b', r'leave\s+travel\s+allowance', r'leave\s+travel\s+concession', r'\bltc\b'],
+        'pf_employee':         [r'employee.{0,15}pf\b', r'\bpf\b.{0,5}employee', r'\bepf\b(?!.*employer)', r'provident\s+fund(?!.*employer)'],
+        'tds_paid':            [r'income\s+tax\s+deduction', r'income\s+tax\b(?!.*return)', r'tax\s+deducted(?!\s+at\s+source\s+u)'],
+        'professional_tax':    [r'professional\s+tax', r'prof\.?\s*tax\b', r'\bpt\b(?=\s+deduction|\s+paid|\s+amount)'],
+        'gross_salary':        [r'gross\s+pay\b', r'gross\s+salary\b', r'gross\s+earnings\b', r'\btotal\s+earnings?\b', r'\btotal\s+salary\b'],
+        'pf_employer':         [r'employer.{0,15}pf\b', r'epf.*employer'],
+        'car_lease_allowance': [r'car\s+lease\b', r'car\s+allowance\b', r'vehicle\s+allowance'],
+        'uniform_allowance':   [r'uniform\s+allowance', r'dress\s+allowance'],
+    }
+
+    clean_text = text.replace(',', '').replace('₹', '').replace('Rs.', '').replace('INR', '')
+    lines = clean_text.split('\n')
+
+    for field, patterns in FIELD_LABELS.items():
+        for line in lines:
+            if not any(re.search(pat, line, re.I) for pat in patterns):
+                continue
+            # All numbers with ≥ 4 digits (≥ 1000) — excludes percentages, codes, years
+            salary_nums = [int(n) for n in re.findall(r'\d{4,}', line) if int(n) >= 1000]
+            if not salary_nums:
+                continue
+            last_val = salary_nums[-1]  # rightmost = YTD column in 3-column payslips
+            current = result.get(field, 0) or 0
+            if current == 0 or last_val > current * 1.5:
+                if current != last_val:
+                    print(f"[YTD_OVERRIDE] {field}: AI={current} → rightmost={last_val}")
+                result[field] = last_val
+            break  # first matching line wins for this field
+
+    return result
+
+
 def _preprocess_ocr_text(text):
     """Normalize OCR text before sending to AI:
     - Remove duplicate lines
@@ -1058,14 +1132,35 @@ def extract_from_text(text, doc_type="payslip"):
 
         is_ytd = result.pop("is_ytd", False)
 
+        # ── YTD column override ───────────────────────────────────────────────
+        # Fixes Standard/Actual/YTD payslips where the AI reads the Actual
+        # (monthly) column instead of the rightmost YTD (annual) column.
+        if doc_type == "payslip":
+            result = _deterministic_ytd_override(text, result)
+
         # ── Deterministic HRA override for payslips ──────────────────────────
-        # Do this BEFORE annualization so we're working on the raw per-period value.
+        # Handles multi-component HRA (FBP HRA + Non-FBP HRA → TOTAL HRA).
+        # Run AFTER _deterministic_ytd_override so it can refine if needed.
         if doc_type == "payslip":
             hra_sum = _sum_all_hra_from_text(text)
             if hra_sum and hra_sum != result.get("hra_received", 0):
-                print(f"[HRA_SUM] Overriding AI hra_received {result.get('hra_received')} → {hra_sum}")
+                print(f"[HRA_SUM] Overriding hra_received {result.get('hra_received')} → {hra_sum}")
                 result["hra_received"] = hra_sum
                 assumptions.append(f"HRA overridden by deterministic sum of all HRA rows = {hra_sum}")
+
+        # ── Gross from components fallback ───────────────────────────────────
+        # When the Gross Pay row shows only the monthly value (no YTD total row),
+        # compute gross as the sum of YTD earnings components already extracted.
+        if doc_type == "payslip":
+            component_sum = sum(result.get(f, 0) or 0 for f in [
+                'basic_salary', 'hra_received', 'special_allowance', 'lta',
+                'car_lease_allowance', 'uniform_allowance',
+            ])
+            gs = result.get('gross_salary', 0) or 0
+            if component_sum > 0 and (gs == 0 or gs < component_sum * 0.8):
+                result['gross_salary'] = component_sum
+                print(f"[EXTRACT_TEXT][payslip] gross_salary recomputed from components = {component_sum}")
+                assumptions.append(f"Gross salary derived from YTD component sum = {component_sum}")
 
         # ── Annualize monthly payslip values ─────────────────────────────────
         # Always store ANNUAL values in the sheet. If the payslip is monthly,
@@ -1085,6 +1180,11 @@ def extract_from_text(text, doc_type="payslip"):
             result["_is_annualized"] = True
         else:
             assumptions.insert(0, "YTD/annual payslip — values already represent the full year")
+
+        # Mark this payslip's values as annual so validate_form16_payslip_consistency
+        # does not multiply them by 12 a second time.
+        if doc_type == "payslip":
+            result["_is_annual_payslip"] = True
 
         print(f"[EXTRACT_TEXT][{doc_type}] result: {result}")
 
@@ -1243,7 +1343,13 @@ def validate_form16_payslip_consistency(merged_data, extractions):
         except Exception:
             return 0.0
 
-    # Fields to check (these should be annual in Form 16, monthly in Payslip)
+    # Determine whether the payslip data is already annualized.
+    # Text fast-path (extract_from_text) and normalization_service (Vision path)
+    # both set _is_annual_payslip = True once annualization is done.
+    # If the flag is absent the values may still be monthly (older Vision extractions).
+    payslip_already_annual = bool(payslip_doc.get('_is_annual_payslip'))
+    print(f"[CONFLICT] payslip_already_annual={payslip_already_annual}")
+
     annual_fields = [
         ('gross_salary', 'Gross Salary'),
         ('basic_salary', 'Basic Salary'),
@@ -1257,59 +1363,58 @@ def validate_form16_payslip_consistency(merged_data, extractions):
         form16_val = _to_num(form16_doc.get(field_key))
         payslip_val = _to_num(payslip_doc.get(field_key))
 
-        # Skip if either is missing
         if form16_val == 0 or payslip_val == 0:
             continue
 
-        # Payslip is MONTHLY, Form 16 is ANNUAL
-        # Annualize payslip value for comparison
-        payslip_annualized = payslip_val * 12
+        # Use payslip value as-is if already annual, otherwise annualize for comparison
+        payslip_annual = payslip_val if payslip_already_annual else payslip_val * 12
 
-        # Check for significant variance
-        variance = abs(payslip_annualized - form16_val) / max(form16_val, payslip_annualized)
+        variance = abs(payslip_annual - form16_val) / max(form16_val, payslip_annual)
 
         if variance > tolerance:
-            # Large discrepancy detected
             conflict = {
                 "field": field_key,
                 "field_name": field_name,
                 "form16_value": form16_val,
                 "form16_source": "Form 16 (Annual)",
-                "payslip_monthly_value": payslip_val,
-                "payslip_annualized_value": round(payslip_annualized, 2),
+                "payslip_annual_value": round(payslip_annual, 2),
+                "payslip_already_annual": payslip_already_annual,
                 "variance_percent": round(variance * 100, 1),
                 "severity": "HIGH" if variance > 0.30 else "MEDIUM",
                 "recommended_value": form16_val,
-                "message": f"{field_name}: Form 16 = ₹{form16_val:,.0f} (annual), "
-                          f"Payslip = ₹{payslip_val:,.0f} (monthly, annualized = ₹{payslip_annualized:,.0f}). "
-                          f"Difference: {variance*100:.1f}%. Using Form 16 value."
+                "message": (
+                    f"{field_name}: Form 16 = ₹{form16_val:,.0f}, "
+                    f"Payslip = ₹{payslip_annual:,.0f} ({'annual' if payslip_already_annual else 'monthly×12'}). "
+                    f"Difference: {variance*100:.1f}%. Using Form 16 value."
+                )
             }
             conflicts.append(conflict)
             print(f"[CONFLICT][{field_key}] {conflict['message']}")
 
-    # Special handling for TDS (should be annual in Form 16, monthly in Payslip)
+    # TDS comparison
     form16_tds = _to_num(form16_doc.get('tds_paid'))
     payslip_tds = _to_num(payslip_doc.get('tds_paid'))
 
     if form16_tds > 0 and payslip_tds > 0:
-        payslip_tds_annual = payslip_tds * 12
+        payslip_tds_annual = payslip_tds if payslip_already_annual else payslip_tds * 12
         tds_variance = abs(payslip_tds_annual - form16_tds) / max(form16_tds, payslip_tds_annual)
 
-        if tds_variance > 0.25:  # 25% tolerance for TDS (wider due to monthly variations)
+        if tds_variance > 0.25:
             conflicts.append({
                 "field": "tds_paid",
                 "field_name": "TDS Paid",
                 "form16_value": form16_tds,
-                "payslip_monthly_value": payslip_tds,
-                "payslip_annualized_value": round(payslip_tds_annual, 2),
+                "payslip_annual_value": round(payslip_tds_annual, 2),
                 "variance_percent": round(tds_variance * 100, 1),
                 "severity": "MEDIUM",
                 "recommended_value": form16_tds,
-                "message": f"TDS: Form 16 = ₹{form16_tds:,.0f} (annual), "
-                          f"Payslip = ₹{payslip_tds:,.0f} (monthly). "
-                          f"Using Form 16 value."
+                "message": (
+                    f"TDS: Form 16 = ₹{form16_tds:,.0f}, "
+                    f"Payslip = ₹{payslip_tds_annual:,.0f}. "
+                    f"Difference: {tds_variance*100:.1f}%. Using Form 16 value."
+                )
             })
-            print(f"[CONFLICT][tds_paid] TDS variance detected: {tds_variance*100:.1f}%")
+            print(f"[CONFLICT][tds_paid] TDS variance: {tds_variance*100:.1f}%")
 
     # IMPORTANT: Form 16 values take PRIORITY - they're already in merged_data
     # The payslip was summed by merge_extractions, but we want Form 16 as primary

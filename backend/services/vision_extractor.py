@@ -68,9 +68,15 @@ FORMAT A — STANDARD MONTHLY PAYSLIP
 FORMAT B — YTD / CUMULATIVE / ANNUAL PAYSLIP
   Signs: Shows MULTIPLE months as columns (Jan, Feb, Mar… or Month-1, Month-2…)
          OR has a "Grand Total", "YTD", "Annual Total", "Cumulative", or "Year to Date" column.
+         OR has THREE columns labeled "Standard | Actual | YTD" (very common in India).
   Action: Extract ONLY from the "Grand Total" / "YTD" / "Annual Total" / rightmost totals column.
-          DO NOT extract from individual month columns.
+          DO NOT extract from individual month columns or the "Actual" (current month) column.
           Mark every salary field with "annual": true.
+
+  ⚠ CRITICAL — Standard/Actual/YTD three-column example:
+     Visual row: "BASIC   99,133.33   99,133.00   1,168,656.00"
+                  Standard(monthly) Actual(March) YTD(annual) ← EXTRACT THIS
+     → basic_salary value = 1168656, "annual": true   ← NOT 99133
 
 ━━━ STEP 2: HRA — SUM ALL VARIANTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
