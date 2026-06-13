@@ -226,41 +226,55 @@ ABSOLUTE RULES:
 • Strip ₹, commas from all numbers — return plain integers"""
 
 INVESTMENT_PROMPTS = {
-    "homeloan": """You are an Indian tax expert. Extract home loan data for ITR filing (FY 2025-26 / AY 2026-27).
+    "homeloan": """You are an Indian tax expert. Extract home loan data for ITR filing.
 
 DOCUMENT TYPE: Home Loan Interest Certificate / Annual Statement / Repayment Schedule / Provisional Certificate
 
-━━━ CRITICAL: FY 2025-26 = Apr 2025 to Mar 2026 ONLY ━━━━━━━━━━━━━━━━━━━
+━━━ CRITICAL: Extract totals for THE FINANCIAL YEAR shown in the document ━━━━━━━━━
+Look for a heading like "Statement for 2024-25" or "Certificate for FY 2025-26".
+Extract interest and principal for THAT year ONLY.
 
 ━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 home_loan_interest
-  → TOTAL interest PAID/DEBITED during FY 2025-26 (Apr 2025 – Mar 2026)
+  → TOTAL interest PAID/DEBITED during the financial year shown in the document
   Labels: "Interest paid", "Total interest", "Interest for the year",
           "Interest component", "Interest charged", "Finance charges",
           "Interest amount", "Total interest paid", "Interest paid during FY",
           "Annual interest", "Interest accrued during the year",
-          "Interest debited during 2025-'26", "Interest debited during 2025-26",
-          "Interest debited", "Interest due"
-  ⚠ The value after the label (e.g. "Interest debited during 2025-'26 : 379030") is 379030 — NOT the year 2025
-  ⚠ Monetary amounts are ≥ 5 digits (≥ 10000). If you see a 4-digit number like "2025" next to a label, that is a YEAR — skip it and read the actual amount that follows
+          "Interest debited during 20XX-'XX", "Interest debited", "Interest due",
+          "Total Interest Charged"
+  ⚠ The value AFTER a label (e.g. "Interest debited during 2024-'25 : 170732") is 170732 — NOT the year 2024
+  ⚠ Monetary amounts are ≥ 5 digits (≥ 10000). 4-digit numbers like "2024" or "2025" are YEARS — skip them
   ⚠ If a "Total" / "Grand Total" / "Annual Interest" row is shown → use THAT value directly
-  ⚠ If only month-wise table shown → SUM only the Apr 2025–Mar 2026 rows
-  ⚠ "Interest Accrued" ≠ "Interest Paid" — use Paid/Debited, not Accrued unless only Accrued available
+  ⚠ If only month-wise table → SUM only the rows for the FY in question
+  ⚠ "Interest Accrued" ≠ "Interest Paid" — prefer Paid/Debited
   ⚠ Do NOT use cumulative/outstanding interest or interest from prior years
   ⚠ Do NOT use the EMI/Total Remittance amount (that is principal + interest combined)
+  ⚠ SPECIAL: If "Simple Interest on Prepayment" or "Prepayment Interest" appears separately,
+     ADD that amount to the main annual interest (both are deductible under Section 24(b))
 
 home_loan_principal
-  → TOTAL principal REPAID/REMITTED during FY 2025-26 (Apr 2025 – Mar 2026)
+  → TOTAL regular EMI principal REPAID/REMITTED during the financial year
   Labels: "Principal paid", "Principal component", "Principal repaid",
           "Principal amount", "Repayment of principal", "EMI principal",
           "Principal payment", "Capital repaid", "Principal for the year",
-          "Amount remitted towards principal", "Amount remitted towards principal during 2025-'26",
-          "Principal remitted", "Principal repaid during 2025-26"
-  ⚠ Monetary amounts are ≥ 5 digits. If label contains "2025" as a year, the amount follows separately
+          "Amount remitted towards principal", "Principal remitted"
+  ⚠ Monetary amounts are ≥ 5 digits
   ⚠ "Total Remittance" = interest + principal combined — do NOT use it for principal alone
-  ⚠ If a "Total Principal" row is shown → use THAT value directly
-  ⚠ If only month-wise table → SUM only the Apr 2025–Mar 2026 principal rows
+  ⚠ If a "Total Principal" / "Principal Repaid During the Year" row → use THAT directly
+  ⚠ If only month-wise table → SUM only the FY principal rows
+
+  ⚠ CRITICAL — EXCLUDE ALL PREPAYMENT / LUMP-SUM PRINCIPAL AMOUNTS:
+     Labels to SKIP: "Principal Prepayment", "Prepayment of Principal",
+     "Principal Prepayment at fully disbursed stage", "Part-payment", "Foreclosure amount"
+     These are ONE-TIME lump-sum payments — do NOT add them to home_loan_principal.
+  ⚠ RULE OF THUMB: For a ₹50L–₹1.5Cr home loan, annual EMI principal is typically ₹1L–₹5L.
+     If you see a value ≥ ₹10L labeled "principal", it is almost certainly a prepayment — EXCLUDE it.
+  ⚠ EXAMPLE: Document shows "Amount remitted towards principal during 2024-'25 : 2,97,904"
+             AND "Principal Prepayment at fully disbursed stage : 14,00,000"
+             → home_loan_principal = 297904 (the EMI amount only)
+             → The 1400000 prepayment is IGNORED
 
 loan_account_no
   → Loan account / reference number
@@ -274,15 +288,15 @@ bank_name
             Aditya Birla Housing, Tata Capital, Indiabulls Housing, GIC Housing
 
 loan_outstanding
-  → Remaining principal balance at end of FY 2025-26 (Mar 2026) or document date
+  → Remaining principal balance at end of the financial year or document date
   Labels: "Outstanding balance", "Principal outstanding", "Closing balance",
           "Balance outstanding", "Outstanding principal", "Principal balance",
           "Opening balance" (if closing not available)
 
 ━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• Extract FY 2025-26 totals only — reject values from previous financial years
-• home_loan_interest + home_loan_principal ≈ total EMI paid (sanity check)
+• Extract totals for the financial year labeled in the document
+• home_loan_interest + home_loan_principal ≈ total EMI paid for the year (sanity check)
 • All amounts as plain integers in INR (strip ₹, Rs., commas, decimals)
 • Use 0 for amounts not found; "" for text fields not found
 • NEVER invent, estimate, or calculate values — extract only what is printed
@@ -296,37 +310,69 @@ Return ONLY valid JSON:
   "loan_outstanding": 0
 }""",
 
-    "school": """You are an Indian tax expert. Extract school fee data for ITR filing (FY 2025-26 / AY 2026-27).
+    "school": """You are an Indian tax expert. Extract school fee data for ITR filing.
 
 DOCUMENT TYPE: School Fee Receipt / Tuition Fee Certificate / Fee Payment Acknowledgement
 
-━━━ CRITICAL: Only TUITION FEES qualify for Section 80C. ━━━━━━━━━━━━━━━━━
-Do NOT include: development fees, building fund, transport, hostel, uniform,
-books, lunch, activity fees, exam fees, or any non-tuition charges.
-ONLY tuition / academic / course fees count.
+━━━ CRITICAL: This document may contain MULTIPLE SEPARATE RECEIPTS ━━━━━━━━━━━━━
+Each receipt is a different payment (e.g., Admission, Term 1, Term 2, Term 3, Textbooks).
+You MUST read EVERY receipt and sum only the qualifying tuition amounts.
 
-━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━ WHICH FEES QUALIFY FOR SECTION 80C? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-school_fees → ANNUAL tuition fees paid during FY 2025-26 (Apr 2025 – Mar 2026)
-              Labels: "Tuition fees", "Tuition fee", "School fees", "Academic fees",
-              "Course fees", "Fees paid", "Total tuition", "Tuition charges"
-              ⚠ If a "Total" / "Grand Total" / "Annual Total" row is present → use THAT single value.
-                Do NOT also add up the individual term/quarter rows — that causes double-counting.
-              ⚠ If NO total row is present → SUM only the individual term/quarter tuition rows for FY 2025-26.
-              ⚠ Exclude development fee, building fund, transport, hostel, exam, activity, uniform fees.
+INCLUDE (tuition / academic fees — these qualify):
+  ✓ Term fee, Tuition fee, Semester fee, School fee (when it is the main per-term charge)
+  ✓ Foundation course fee (if it is a regular school curriculum subject)
+  ✓ Annual charges labeled "School Fee" / "Academic Fee"
 
-school_name → Full name of the school or institution (from header or letterhead)
+EXCLUDE (non-tuition — these do NOT qualify for 80C):
+  ✗ Admission fee / Registration fee / Enrollment fee
+  ✗ Development fee, Building fund, Infrastructure fee
+  ✗ Textbook fee / Book fee / Stationery fee
+  ✗ Transport / Bus fee
+  ✗ Hostel / Boarding fee
+  ✗ Uniform / Dress / Clothing fee
+  ✗ Lunch / Canteen / Mess fee
+  ✗ Activity fee / Sports fee / Creative Learning fee
+  ✗ LOC (Library / Optional Course) fee
+  ✗ Exam fee
+  ✗ Donation
+
+━━━ HOW TO EXTRACT school_fees ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Step 1: Identify each SEPARATE RECEIPT in the document (each has its own date, receipt no, amount).
+Step 2: For each receipt, determine the fee type:
+  - If the receipt is ONLY for Admission Fee or Textbooks → SKIP it entirely (amount = 0)
+  - If the receipt is a TERM FEE / SCHOOL FEE receipt → include the tuition portion
+Step 3: For receipts that have a line-by-line breakdown:
+  - Add only lines labeled as Term Fee / Tuition Fee
+  - Exclude lines for LOC, Activity, Creative Learning, etc.
+  - Example receipt breakdown → "Term Fee: 9,660 | LOC: 300 | Creative Learning: 1,200 | Total: 11,160"
+    → take 9,660 only (not the 11,160 total, because 300+1,200 are non-tuition)
+Step 4: If a receipt shows ONLY a total with no line breakdown → include the full total
+  (most term-fee receipts are pure tuition)
+Step 5: SUM the qualifying amounts from ALL receipts
+
+school_fees → SUM of qualifying tuition amounts across ALL receipts in this document
+  ⚠ If there is a single Grand Total row covering all receipts → use THAT (no double count)
+  ⚠ If receipts are separate (no grand total) → sum each receipt's qualifying amount manually
+  ⚠ Do NOT include receipts for Admission Fee or Textbooks in the total
+
+school_name → Full name of the school from header or letterhead
+child_name  → Name of the student (from "Student Name" / "Pupil Name" / "Name" on receipts)
 
 ━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• Annual tuition total only (Apr 2025 – Mar 2026)
+• Sum tuition fees across ALL qualifying receipts in the document
+• Exclude admission fee, textbooks, transport, hostel, activity, LOC, creative learning
 • school_fees as plain integer in INR
-• NEVER invent values
+• NEVER invent values — if a fee type is genuinely ambiguous, include it
 
 Return ONLY valid JSON:
 {
   "school_fees": 0,
-  "school_name": ""
+  "school_name": "",
+  "child_name": ""
 }""",
 
     "nps": """You are an Indian tax expert. Extract NPS data for ITR filing (FY 2025-26 / AY 2026-27).
@@ -377,11 +423,15 @@ Return ONLY valid JSON:
   "nps_employer": 0
 }""",
 
-    "insurance": """You are an Indian tax expert. Extract insurance data for ITR filing (FY 2025-26 / AY 2026-27).
+    "insurance": """You are an Indian tax expert. Extract insurance data for ITR filing.
 
 DOCUMENT TYPE: Insurance Premium Receipt / Policy Document / Premium Payment Certificate / Renewal Notice
 
-━━━ CRITICAL: Extract the premium ACTUALLY PAID in FY 2025-26 (Apr 2025–Mar 2026) ━━━
+━━━ CRITICAL: premium_amount = TOTAL GROSS PREMIUM PAID (INCLUDING GST/taxes) ━━━
+
+For Section 80C (life insurance) and Section 80D (health insurance), the FULL AMOUNT ACTUALLY
+PAID including all taxes (GST, service tax, cess) is the deductible amount.
+"Net Premium" (before GST) is LESS than what was paid — DO NOT use it alone.
 
 ━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -392,42 +442,62 @@ policy_no
 
 insurer_name
   → Insurance company name (from header or letterhead)
-  Life insurers: LIC of India, HDFC Life, ICICI Prudential, Max Life, SBI Life,
-                 Bajaj Allianz Life, Tata AIA, Kotak Life, PNB MetLife, Aditya Birla Sun Life,
-                 Canara HSBC, Edelweiss Tokio, IndiaFirst Life, Future Generali Life
-  Health insurers: Star Health, Niva Bupa, Care Health, Religare Health,
-                   New India Assurance, United India, National Insurance, Oriental Insurance,
-                   HDFC ERGO Health, Aditya Birla Health, ManipalCigna, Bajaj Allianz Health
+  Life: LIC of India, HDFC Life, ICICI Prudential, Max Life, SBI Life, Bajaj Allianz Life,
+        Tata AIA, Kotak Life, PNB MetLife, Aditya Birla Sun Life
+  Health: Star Health, Niva Bupa, Care Health, Religare Health, New India Assurance,
+          United India, National Insurance, Oriental Insurance, HDFC ERGO Health,
+          Aditya Birla Health, ManipalCigna, Bajaj Allianz Health
 
 premium_amount
-  → Premium ACTUALLY PAID in FY 2025-26 (Apr 2025–Mar 2026)
-  Labels: "Premium paid", "Premium amount", "Amount paid", "Amount received",
-          "Total premium", "Net premium", "Annual premium", "Installment premium",
-          "Premium receipt amount", "Total amount paid", "Premium collected"
-  ⚠ If receipt is for QUARTERLY premium → use the amount on this receipt (do NOT multiply by 4;
-    the system already accounts for multiple receipts)
-  ⚠ If receipt is for HALF-YEARLY premium → use the amount on this receipt
-  ⚠ If receipt is for ANNUAL premium → use the amount on this receipt
+  → The GROSS TOTAL premium actually paid on this receipt (including GST)
+
+  Priority — use the FIRST label found in this order:
+  1. "Gross Premium" / "Total Premium" / "Total Amount Paid" / "Amount Received"
+     → This IS the full amount including GST — USE THIS
+  2. "Premium Collected" / "Annual Premium" / "Premium Paid"
+     → Use if labeled as total/gross or if no breakdown is shown
+  3. If ONLY "Net Premium" shown with GST itemized separately:
+     → ADD: Net Premium + CGST + SGST (or IGST) = Total. Use the total.
+
+  ⚠ "Net Premium" / "Basic Premium" / "Net Amount" = premium BEFORE GST — DO NOT use alone
+  ⚠ EXAMPLE: "Net Premium: 22,107 | CGST: 1,990 | SGST: 1,990 | Gross Premium: 26,086"
+             → use 26,086 (gross), NOT 22,107 (net)
+  ⚠ EXAMPLE: "Net Premium: 37,173 | CGST: 3,346 | SGST: 3,346 | Total: 43,865"
+             → use 43,865 (total), NOT 37,173
+  ⚠ If receipt is QUARTERLY → use the receipt amount as-is (do NOT multiply by 4)
   ⚠ Use amount ACTUALLY PAID — NOT "premium due", "renewal premium", or future installments
-  ⚠ If GST is shown separately, use "Net Premium" (before GST) if available; else use total
+
+insured_for
+  → WHO is covered by this policy (determines the Section 80D limit that applies)
+  Allowed values (use EXACTLY one):
+  "self_family"   → self / spouse / children (family floater or individual for self)
+  "parent"        → parent(s) who are NOT senior citizens (below 60 years old)
+  "parent_senior" → parent(s) who ARE senior citizens (aged 60 or above)
+
+  How to determine:
+  - Look at the insured person's name, relationship, and age in the policy schedule
+  - If the insured is named as Father / Mother / Parent and age is shown as 60+ → "parent_senior"
+  - If the insured is named as Father / Mother and age is below 60 → "parent"
+  - If the insured is the policyholder / self / spouse / child → "self_family"
+  - If it's a family floater covering self+spouse+children → "self_family"
+  ⚠ Check the actual insured name and age — do not assume
 
 sum_assured
-  → Life cover / insured amount
+  → Life cover or sum insured amount
   Labels: "Sum assured", "Sum insured", "Coverage amount", "Life cover",
-          "Policy amount", "Insured amount", "Face value", "Death benefit", "Basic sum assured"
-  ⚠ For health insurance this may be "Sum Insured" / "Cover Amount" — use that value
+          "Policy amount", "Insured amount", "Face value", "Death benefit"
 
 coverage_type
   → EXACTLY "life" or "health" — no other values allowed
-  "life"   → life insurance, term plan, ULIP, endowment, money-back, whole life, pension plan
-  "health" → mediclaim, health insurance, family floater, critical illness, hospital cash, top-up plan
-  ⚠ When in doubt: if it pays on death → "life"; if it pays on hospitalisation → "health"
+  "life"   → life insurance, term plan, ULIP, endowment, money-back, whole life, pension
+  "health" → mediclaim, health insurance, family floater, critical illness, hospital cash, top-up
+  ⚠ Pays on death → "life"; pays on hospitalisation → "health"
 
 ━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• premium_amount = the amount on THIS receipt/certificate for THIS payment period
+• premium_amount = GROSS amount paid (including GST) — never just the net/base premium
 • All amounts as plain integers in INR (strip ₹, Rs., commas, decimals)
-• coverage_type must be exactly "life" or "health" — nothing else
+• coverage_type must be exactly "life" or "health"
 • NEVER invent or estimate values
 
 Return ONLY valid JSON:
@@ -435,8 +505,9 @@ Return ONLY valid JSON:
   "policy_no": "",
   "insurer_name": "",
   "premium_amount": 0,
+  "insured_for": "self_family",
   "sum_assured": 0,
-  "coverage_type": "life"
+  "coverage_type": "health"
 }""",
 
     "donation": """You are an Indian tax expert. Extract donation data for ITR filing (FY 2025-26 / AY 2026-27).
@@ -579,20 +650,33 @@ def _regex_fallback(text, doc_type):
                     result['home_loan_interest'] = val
                     break
 
-        # Principal — specific labels first
+        # Principal — specific labels first, EXCLUDING prepayment/lump-sum lines
+        _PREPAYMENT_MARKERS = re.compile(
+            r'prepayment|pre-payment|pre\s+payment|fully\s+disbursed|foreclosure|part.?payment',
+            re.I
+        )
         for pat in [
-            r'amount\s+remitted\s+towards\s+principal[^\d]*(\d{5,})',  # "Amount Remitted towards principal during 2025-'26 : 342676"
+            r'amount\s+remitted\s+towards\s+principal\s+during[^\d]*(\d{5,})',  # "Amount Remitted towards principal during 2024-'25 : 297904"
             r'principal\s+repaid\s+during[^\d]*(\d{5,})',
-            r'principal paid[^\d]*(\d{5,})',
-            r'principal repaid[^\d]*(\d{5,})',
-            r'principal component[^\d]*(\d{5,})',
-            r'principal amount[^\d]*(\d{5,})',
-            r'repayment of principal[^\d]*(\d{5,})',
-            r'principal remitted[^\d]*(\d{5,})',
-            r'principal[^\d]{0,20}(\d{5,})',                       # generic — ≥5 digits only
+            r'repayment\s+of\s+principal\s+during[^\d]*(\d{5,})',
+            r'principal\s+component[^\d]*(\d{5,})',
+            r'principal\s+remitted\s+during[^\d]*(\d{5,})',
+            r'principal\s+paid\s+during[^\d]*(\d{5,})',
+            r'amount\s+remitted\s+towards\s+principal[^\d]*(\d{5,})',
+            r'principal\s+paid[^\d]*(\d{5,})',
+            r'principal\s+repaid[^\d]*(\d{5,})',
+            r'principal\s+amount[^\d]*(\d{5,})',
+            r'repayment\s+of\s+principal[^\d]*(\d{5,})',
+            r'principal\s+remitted[^\d]*(\d{5,})',
         ]:
             m = re.search(pat, t, re.I)
             if m:
+                # Check that the matched line does NOT contain prepayment indicators
+                line_start = t.rfind('\n', 0, m.start()) + 1
+                line_end_idx = t.find('\n', m.end())
+                line = t[line_start:line_end_idx if line_end_idx != -1 else len(t)]
+                if _PREPAYMENT_MARKERS.search(line):
+                    continue  # This is a prepayment line — skip it
                 val = int(m.group(1).replace(',', ''))
                 if val >= _MIN_LOAN_AMT:
                     result['home_loan_principal'] = val
@@ -655,24 +739,51 @@ def _regex_fallback(text, doc_type):
                 break
 
     elif doc_type == 'insurance':
+        # Prefer GROSS premium (including GST) over net premium
         for pat in [
-            r'premium\s+paid[^\d]*(\d[\d,]+)',
-            r'annual\s+premium[^\d]*(\d[\d,]+)',
-            r'amount\s+paid[^\d]*(\d[\d,]+)',
-            r'premium\s+amount[^\d]*(\d[\d,]+)',
-            r'premium[^\d]{0,20}(\d{3,}[\d,]*)',
+            r'gross\s+premium[^\d]*(\d[\d,]+)',            # "Gross Premium: 26,086" — total incl. GST
+            r'total\s+premium\s+paid[^\d]*(\d[\d,]+)',     # "Total Premium Paid"
+            r'total\s+amount\s+paid[^\d]*(\d[\d,]+)',      # "Total Amount Paid"
+            r'amount\s+received[^\d]*(\d[\d,]+)',           # "Amount Received" by insurer
+            r'premium\s+collected[^\d]*(\d[\d,]+)',         # "Premium Collected"
+            r'annual\s+premium[^\d]*(\d[\d,]+)',            # "Annual Premium"
+            r'total\s+premium[^\d]*(\d[\d,]+)',             # "Total Premium"
+            r'premium\s+paid[^\d]*(\d[\d,]+)',              # "Premium Paid" (may be gross or net)
+            r'premium\s+amount[^\d]*(\d[\d,]+)',            # "Premium Amount"
+            r'premium[^\d]{0,20}(\d{4,}[\d,]*)',           # Generic (4+ digits to avoid small numbers)
         ]:
             m = re.search(pat, t, re.I)
             if m:
-                result['premium_amount'] = int(m.group(1).replace(',', ''))
+                # If we matched a "net premium" line, try to add GST if found on nearby lines
+                raw_val = int(m.group(1).replace(',', ''))
+                matched_line_start = t.rfind('\n', 0, m.start()) + 1
+                matched_line_end = t.find('\n', m.end())
+                matched_line = t[matched_line_start:matched_line_end if matched_line_end != -1 else len(t)].lower()
+                if 'net' in matched_line or 'basic' in matched_line:
+                    # Try to find gross/total premium nearby
+                    gross_m = re.search(r'(?:gross|total)\s+premium[^\d]*(\d[\d,]+)', t, re.I)
+                    if gross_m:
+                        raw_val = int(gross_m.group(1).replace(',', ''))
+                result['premium_amount'] = raw_val
                 break
+
         m = re.search(r'(?:policy\s+no|policy\s+number|policy\s+id)[^\w]*([A-Z0-9\-]{6,20})', t, re.I)
         if m: result['policy_no'] = m.group(1).strip()
+
         # Coverage type
         if re.search(r'\b(mediclaim|health|floater|critical illness)\b', t, re.I):
             result['coverage_type'] = 'health'
         else:
             result['coverage_type'] = 'life'
+
+        # insured_for: detect parent (senior citizen) vs self/family
+        if re.search(r'\b(father|mother|parent)\b', t, re.I):
+            if re.search(r'\b(senior\s+citizen|age[d]?\s*[:\-]?\s*[6-9]\d|7[0-9]\s*years?|8[0-9]\s*years?)\b', t, re.I):
+                result['insured_for'] = 'parent_senior'
+            else:
+                result['insured_for'] = 'parent'
+        else:
+            result['insured_for'] = 'self_family'
 
     elif doc_type == 'donation':
         for pat in [
@@ -1079,12 +1190,10 @@ def extract_from_text(text, doc_type="payslip"):
                 print(f"[EXTRACT_TEXT][form16] Deterministic found only {found} — calling AI")
 
         elif doc_type == "homeloan":
-            det_result = _regex_fallback(text, doc_type)
-            if det_result.get("home_loan_interest", 0) > 0:
-                print(f"[EXTRACT_TEXT][homeloan] Regex found interest={det_result['home_loan_interest']} — skipping AI call")
-                result = det_result
-            else:
-                print(f"[EXTRACT_TEXT][homeloan] Regex found no interest — calling AI")
+            # Always call AI for homeloan — documents can contain prepayments, multi-year rows,
+            # and simple interest on prepayments that require semantic understanding.
+            # Regex is kept as fallback only (used below if AI returns nothing).
+            print(f"[EXTRACT_TEXT][homeloan] Always calling AI for accurate principal/interest extraction")
 
         elif doc_type == "nps":
             det_result = _regex_fallback(text, doc_type)
