@@ -208,10 +208,7 @@ def save_phase():
             _sa and _sa != 'service_account.json'
         )
         if not _sheets_configured:
-            referral_code = data.get('referral_code', 'LOCAL-TEST')
-            if not submission_id:
-                import uuid
-                submission_id = f"LOCAL-{uuid.uuid4().hex[:8].upper()}"
+            referral_code = data.get('referral_code', '')
             print(f"[SAVE_PHASE][LOCAL] Sheets not configured — returning mock success. submission_id={submission_id}")
             return jsonify({"success": True, "submission_id": submission_id, "referral_code": referral_code})
 
