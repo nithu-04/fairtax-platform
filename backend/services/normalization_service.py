@@ -139,30 +139,59 @@ def normalize_extractions(extractions_list, doc_types_list):
         }
 
     # Extract field data (handle both formats)
+    # Salary fields that should be annualized when marked as monthly
+    _MONTHLY_PAYSLIP_FIELDS = {
+        'gross_salary', 'basic_salary', 'hra_received', 'lta', 'special_allowance',
+        'car_lease_allowance', 'uniform_allowance', 'pf_employee', 'pf_employer',
+        'tds_paid', 'professional_tax', 'gratuity', 'leave_encashment',
+    }
+
     extractions_data = []
-    for ext in extractions_list:
+    for i, ext in enumerate(extractions_list):
+        # Resolve doc_type early so flatten loop can use it
+        doc_type = ext.get("document_type_detected") or (doc_types_list[i] if i < len(doc_types_list) else "unknown")
+
         if "fields" in ext:
-            # Vision extractor format
+            # Vision extractor format: {"field": {"value": X, "confidence": Y, "monthly": true, ...}}
             fields = ext["fields"]
             flat = {}
+            annualized_any = False
             for k, v in fields.items():
                 if isinstance(v, dict) and "value" in v:
-                    flat[k] = v["value"]
+                    val = v["value"]
+                    # Annualize monthly payslip fields emitted by the vision extractor.
+                    # The vision prompt marks monthly payslip fields with "monthly": true.
+                    # We multiply by 12 here so every downstream consumer sees annual values.
+                    if (doc_type == "payslip"
+                            and v.get("monthly")
+                            and isinstance(val, (int, float))
+                            and val is not None
+                            and k in _MONTHLY_PAYSLIP_FIELDS):
+                        val = val * 12
+                        annualized_any = True
+                    flat[k] = val
                 else:
                     flat[k] = v
+            if annualized_any:
+                flat["_is_annual_payslip"] = True
+                print(f"[NORM] Payslip: annualized monthly fields ×12 (doc_type={doc_type})")
+            elif doc_type == "payslip":
+                # YTD payslip — vision extractor marked fields as "annual"; values already correct
+                flat["_is_annual_payslip"] = True
+
             extractions_data.append({
                 "data": flat,
                 "fields": fields,
                 "confidence": ext.get("overall_confidence", 0),
-                "doc_type": ext.get("document_type_detected", doc_types_list[len(extractions_data)]) if len(extractions_data) < len(doc_types_list) else "unknown"
+                "doc_type": doc_type,
             })
         else:
-            # Legacy format or flat dict
+            # Legacy format or flat dict (e.g. from extract_from_text fast-path)
             extractions_data.append({
                 "data": ext,
                 "fields": {k: {"value": v, "confidence": 0.7} for k, v in ext.items()},
                 "confidence": 0.7,
-                "doc_type": doc_types_list[len(extractions_data)] if len(extractions_data) < len(doc_types_list) else "unknown"
+                "doc_type": doc_type,
             })
 
     # ─────── DUPLICATE DETECTION ──────────────────────
@@ -384,8 +413,11 @@ def normalize_extractions(extractions_list, doc_types_list):
                     assumptions.append(f"{count} Donation documents detected: amounts summed (multiple donations)")
 
     # ─────── FILTER SENSITIVE FIELDS ─────────────────
-    # Exclude metadata fields from normalized output
-    normalized = {k: v for k, v in normalized.items() if not k.startswith("_")}
+    # Exclude internal metadata fields but preserve _is_annual_payslip so
+    # validate_form16_payslip_consistency can skip the ×12 multiplication.
+    _KEEP_UNDERSCORE = {"_is_annual_payslip"}
+    normalized = {k: v for k, v in normalized.items()
+                  if not k.startswith("_") or k in _KEEP_UNDERSCORE}
 
     # Compute overall extraction confidence
     overall_confidence = sum(all_confidences) / len(all_confidences) if all_confidences else 0

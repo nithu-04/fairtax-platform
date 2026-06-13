@@ -9,8 +9,66 @@ import tax_engine
 import tax_config
 from decimal import Decimal, ROUND_HALF_UP
 
-EXTRACTION_PROMPT = """You are a tax document extractor. Extract ONLY factual values from the document.
-Return ONLY valid JSON with these exact keys (use 0 if not found, strings for names):
+EXTRACTION_PROMPT = """You are an Indian tax expert specializing in Form 16 (Part A + Part B) for ITR filing FY 2025-26 / AY 2026-27.
+
+━━━ FORM 16 STRUCTURE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Part A — TDS summary (employer's quarterly TDS deposits with government)
+Part B — Detailed salary & deduction breakup (the main extraction source)
+
+━━━ SALARY FIELDS (primarily from Part B) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+section_17_1  → "Salary as per provisions contained in section 17(1)"
+               OR "Salary u/s 17(1)" — this is the TOTAL of all salary components
+               (basic + HRA + LTA + allowances etc. as reported by employer)
+               ⚠ This is usually the largest single number in the document
+
+section_17_2  → "Value of perquisites u/s 17(2)" — car perk, accommodation, stock options etc.
+               Usually small or 0. Use 0 if not found.
+
+section_17_3  → "Profits in lieu of salary u/s 17(3)" — ex-gratia, compensation etc.
+               Usually 0. Use 0 if not found.
+
+gross_salary  → section_17_1 + section_17_2 + section_17_3 (their SUM)
+               Label in document: "Gross Salary" — usually the next row after the three 17(x) rows
+               ⚠ NEVER use "Net Salary" / "Income chargeable under head salaries" — those are AFTER deductions
+               ⚠ NEVER use the "Standard Deduction" or "Total Deductions" rows
+
+hra_received  → HRA amount RECEIVED (not exemption). Look in salary breakup attached to Form 16.
+               Label: "House Rent Allowance", "HRA received"
+               ⚠ If only exemption shown (u/s 10(13A)), use that value as hra_received
+
+basic_salary  → Basic salary component (in salary breakup if present, else 0)
+
+lta           → "Leave Travel Allowance" / "LTC" received amount (use 0 if not shown separately)
+
+tds_paid      → TOTAL TDS deducted for the full year.
+               From Part B: "Tax deducted at source u/s 192(1)" / "Total tax deducted"
+               From Part A: Sum of all quarterly "Amount of TDS" columns if Part B total missing
+               ⚠ This should be a plausible fraction of gross salary (typically 5%–35%)
+               ⚠ NEVER confuse with "Total salary" or "Gross salary"
+
+professional_tax → "Professional Tax u/s 16(iii)" — typically ₹2,400/year max
+
+pf_employee   → Employee's PF contribution (in salary breakup if present)
+
+━━━ IDENTITY FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+name          → Employee's full name (NOT employer)
+employer_name → Employer's full legal name (from "Name of Employer" or letterhead)
+pan           → Employee's PAN — 10 characters: 5 letters + 4 digits + 1 letter (e.g. ABCDE1234F)
+               ⚠ NOT the employer's PAN (TAN) — employee PAN is usually in "Permanent Account Number of the Employee"
+assessment_year → "2026-27" (FY 2025-26 maps to AY 2026-27)
+
+━━━ CRITICAL RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• Form 16 is ALWAYS annual — never multiply or divide any values
+• gross_salary MUST equal section_17_1 + section_17_2 + section_17_3
+• tds_paid must be much smaller than gross_salary (it's tax deducted, not salary)
+• Use 0 for fields not found — NEVER invent or estimate
+• Strip ₹, Rs., commas from all numbers — return plain integers only
+
+Return ONLY valid JSON:
 {
   "name": "",
   "employer_name": "",
@@ -32,54 +90,114 @@ Return ONLY valid JSON with these exact keys (use 0 if not found, strings for na
   "section_17_1": 0,
   "section_17_2": 0,
   "section_17_3": 0
-}
-
-CRITICAL RULES:
-• Never invent values. Use 0 only if genuinely not found.
-• All monetary values MUST be ANNUAL amounts (convert monthly by ×12 and note in assumptions).
-• Do NOT guess or estimate. Extract only what you see.
-• Numbers: plain integers (no commas, no currency symbols)."""
+}"""
 
 # Dedicated prompt for payslip text extraction (fast-path via pdfplumber)
-PAYSLIP_TEXT_EXTRACTION_PROMPT = """You are an Indian payroll expert extracting salary figures for ITR tax filing.
+PAYSLIP_TEXT_EXTRACTION_PROMPT = """You are an Indian payroll expert extracting salary figures for ITR tax filing (FY 2025-26).
 
-━━━ STEP 1 — DETECT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━ STEP 1 — IDENTIFY PAYSLIP FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-YTD / ANNUAL PAYSLIP (most common in India):
-  Signs: Multiple month columns visible (Apr 2024, May 2024 … or Month-1, Month-2 …)
-         AND a "Grand Total" / "Annual Total" / "Total" column on the FAR RIGHT.
-  Action: Use ONLY the Grand Total / Annual Total column. Set is_ytd = true.
-          Do NOT read any individual month column.
+YTD / ANNUAL PAYSLIP  (set is_ytd = true)
 
-MONTHLY PAYSLIP:
-  Signs: Shows a single month with one Amount column.
-  Action: Extract that month's figures. Set is_ytd = false.
+  TYPE A — Multi-month layout:
+    Columns: Apr | May | Jun | … | Grand Total / Annual / YTD
+    Rule: Extract ONLY from the Grand Total / YTD column (rightmost).
 
-━━━ STEP 2 — FIELD EXTRACTION RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  TYPE B — Standard / Actual / YTD layout  ← VERY COMMON IN INDIA
+    Each row has THREE numbers:
+      Standard (or Scheduled) | Actual | YTD
+      ─────────────────────────  ──────   ───────────────────────────────
+      budgeted monthly amount    THIS     cumulative year-to-date total
+                                 month    ← ALWAYS USE THIS COLUMN
 
-Read each row label carefully. For YTD payslips use ONLY the Grand Total column value.
+    Signs: Column headers containing "Standard", "Actual", "YTD" or "Year to Date"
+    Rule: Extract ONLY the YTD column — the RIGHTMOST number on each earnings/deduction row.
 
-gross_salary     → Row: "TOTAL EARNING" | "GROSS SALARY" | "GROSS PAY" | "TOTAL SALARY" | "CTC"
-basic_salary     → Row: "BASIC" | "BASIC SALARY" | "BASIC PAY"
-hra_received     → SUM of EVERY row whose label contains the word "HRA":
-                   Examples: HRA, NON-FBP HRA, METRO HRA, BASIC HRA, SPECIAL HRA, FBP HRA
-                   Add ALL of them together. Show the sum in hra_received.
-tds_paid         → Row: "INCOME TAX" | "TDS" | "TAX DEDUCTED AT SOURCE" | "TAX DEDUCTION"
-                   ⚠ NEVER use "TOTAL DEDUCTION" (that includes PF + PT + TDS together)
-pf_employee      → Row: "PF" | "EMPLOYEE PF" | "EPF" | "EMPLOYEE EPF" | "PF CONTRIBUTION"
-                   (the employee's own contribution, not employer's)
-pf_employer      → Row: "EMPLOYER PF" | "EMPLOYER EPF" | "EMPLOYER CONTRIBUTION" (if present)
-professional_tax → Row: "PROF TAX" | "PROFESSIONAL TAX" | "PT" | "P.TAX" | "P TAX"
-lta              → Row: "LTA" | "LEAVE TRAVEL ALLOWANCE" | "LEAVE TRAVEL"
-special_allowance→ Row: "SPECIAL ALLOWANCE" | "SPECIAL PAY" | "NON-FBP OTHER ALL" | "OTHER ALLOWANCE"
-car_lease_allowance → Row: "CAR LEASE" | "CAR ALLOWANCE" | "VEHICLE ALLOWANCE" | "CAR LEASE ALLOWANCE"
-uniform_allowance → Row: "UNIFORM ALLOWANCE" | "DRESS ALLOWANCE"
-gratuity         → Row: "GRATUITY"
-leave_encashment → Row: "LEAVE ENCASHMENT" | "ENCASHMENT"
+    ⚠ CRITICAL EXAMPLE (Type B payslip):
+       Text row:  "BASIC    99,133.33    99,133.00    1,168,656.00"
+                   Standard(monthly)  Actual(March)  YTD(annual) ← USE THIS
+       → basic_salary = 1168656    ← NOT 99133 (that is the monthly Actual)
 
-━━━ STEP 3 — RETURN JSON ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ⚠ CRITICAL EXAMPLE (Type B deductions):
+       Text row:  "INCOME TAX DEDUCTION    42,744.00    42,744.00    607,794.00"
+                   Standard               Actual(March) YTD(annual) ← USE THIS
+       → tds_paid = 607794    ← NOT 42744
 
-Return ONLY valid JSON. All monetary values must be whole integers (no decimals, no commas):
+MONTHLY PAYSLIP  (set is_ytd = false)
+  Signs: A single month heading (e.g. "March 2026") with ONE amount column per row.
+         No YTD / cumulative column present.
+  Rule:  Extract that single month's figures. The system will annualize (×12).
+
+━━━ STEP 2 — TABLE STRUCTURE RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Payslips typically have two sections:
+  EARNINGS (left/top): Basic, HRA, LTA, Allowances → these form gross salary
+  DEDUCTIONS (right/bottom): PF, PT, TDS, other cuts → do NOT add to earnings
+
+gross_salary = TOTAL EARNINGS (sum of the earnings section)
+  → Row labels: "TOTAL EARNING" | "GROSS EARNINGS" | "GROSS SALARY" | "GROSS PAY" |
+                "TOTAL SALARY" | "GROSS WAGES" | "TOTAL PAYABLE"
+  ⚠ Do NOT use "CTC" — CTC includes employer PF, gratuity etc. which are NOT part of gross salary
+  ⚠ Do NOT use "NET SALARY" / "NET PAY" / "TAKE HOME" — those are after deductions
+  ⚠ Do NOT use "TOTAL DEDUCTIONS" row
+
+━━━ STEP 3 — FIELD EXTRACTION ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+For each field, look in the EARNINGS section unless stated otherwise.
+
+basic_salary
+  → "BASIC" | "BASIC SALARY" | "BASIC PAY" | "BASIC WAGES"
+
+hra_received
+  → SUM of ALL rows whose label contains "HRA":
+    "HRA" | "HOUSE RENT ALLOWANCE" | "NON-FBP HRA" | "FBP HRA" | "METRO HRA" |
+    "BASIC HRA" | "SPECIAL HRA" | "HRA COMPONENT"
+  ⚠ If a "TOTAL HRA" or "HRA TOTAL" summary row exists, use ONLY that — do not also add sub-rows
+
+lta
+  → "LTA" | "LEAVE TRAVEL ALLOWANCE" | "LTC" | "LEAVE TRAVEL CONCESSION"
+
+special_allowance
+  → "SPECIAL ALLOWANCE" | "SPECIAL PAY" | "NON-FBP OTHER ALL" | "OTHER ALLOWANCE" |
+    "MISCELLANEOUS ALLOWANCE" | "FLEXI ALLOWANCE" | "PERSONAL PAY"
+  ⚠ Use the SINGLE "Special Allowance" row — do not sum multiple unrelated rows
+
+car_lease_allowance
+  → "CAR LEASE" | "CAR LEASE ALLOWANCE" | "CAR ALLOWANCE" | "VEHICLE ALLOWANCE" |
+    "CAR MAINTENANCE" | "CONVEYANCE (CAR)" | "COMPANY CAR ALLOWANCE"
+
+uniform_allowance
+  → "UNIFORM ALLOWANCE" | "DRESS ALLOWANCE" | "CLOTHING ALLOWANCE"
+
+tds_paid  (look in DEDUCTIONS section)
+  → "INCOME TAX" | "TDS" | "TAX DEDUCTED AT SOURCE" | "TAX DEDUCTION" | "I.TAX" | "IT DEDUCTION"
+  ⚠ NEVER use "TOTAL DEDUCTION" / "TOTAL DEDUCTIONS" — that is the sum of PF + PT + TDS
+  ⚠ NEVER use "GROSS SALARY" or any earnings row for this field
+  ⚠ TDS should be a reasonable fraction of gross (5%–35%); if your extracted value is > gross, it is wrong
+
+pf_employee  (look in DEDUCTIONS section — employee's own share only)
+  → "EMPLOYEE PF" | "EPF EMPLOYEE" | "PF (EMPLOYEE)" | "PF EMPLOYEE SHARE" |
+    "PROVIDENT FUND" | "EPF" | "PF DEDUCTION" | "PF CONTRIBUTION (EE)"
+  ⚠ NOT the employer's contribution (that is pf_employer)
+
+pf_employer  (look in DEDUCTIONS or CTC section)
+  → "EMPLOYER PF" | "EPF EMPLOYER" | "PF (EMPLOYER)" | "PF EMPLOYER SHARE" |
+    "EMPLOYER CONTRIBUTION PF" | "PF CONTRIBUTION (ER)"
+  (use 0 if not present)
+
+professional_tax  (look in DEDUCTIONS section)
+  → "PROFESSIONAL TAX" | "PROF TAX" | "PT" | "P.TAX" | "P TAX" | "PROFESSION TAX"
+  ⚠ Typically ₹200/month or ₹2,400/year max — reject any value above ₹3,000/month
+
+gratuity
+  → "GRATUITY" (usually in CTC breakup, not monthly deduction)
+
+leave_encashment
+  → "LEAVE ENCASHMENT" | "LEAVE SALARY" | "ENCASHMENT"
+
+━━━ STEP 4 — RETURN JSON ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Return ONLY valid JSON. All monetary values must be whole integers:
 {
   "gross_salary": 0,
   "basic_salary": 0,
@@ -98,49 +216,90 @@ Return ONLY valid JSON. All monetary values must be whole integers (no decimals,
   "assumptions": []
 }
 
-CRITICAL: Use 0 for missing fields. Never invent. Never use monthly column values for YTD payslips."""
+ABSOLUTE RULES:
+• is_ytd = true if ANY YTD / Grand Total column is present (Type A or Type B)
+• For Type B (Standard/Actual/YTD): EVERY field must come from the YTD column — the RIGHTMOST number on each row. NEVER use the Actual (middle) column.
+• For Type A (multi-month): use ONLY the Grand Total / YTD column — never individual month columns
+• gross_salary must be from the TOTAL EARNINGS row — not CTC, not net pay
+• tds_paid must come from the DEDUCTIONS section — never from an earnings row
+• Use 0 for any field not found — NEVER guess or estimate
+• Strip ₹, commas from all numbers — return plain integers"""
 
 INVESTMENT_PROMPTS = {
-    "homeloan": """You are an Indian tax expert. Extract home loan data for ITR filing (FY 2025-26 / AY 2026-27).
+    "homeloan": """You are an Indian tax expert. Extract home loan data for ITR filing.
 
-DOCUMENT TYPE: Home Loan Interest Certificate / Annual Statement / Repayment Schedule / Amortization Statement
+DOCUMENT TYPE: Home Loan Interest Certificate / Annual Statement / Repayment Schedule / Provisional Certificate
+
+━━━ CRITICAL: Extract totals for THE FINANCIAL YEAR shown in the document ━━━━━━━━━
+Look for a heading like "Statement for 2024-25" or "Certificate for FY 2025-26".
+Extract interest and principal for THAT year ONLY.
 
 ━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-home_loan_interest  → TOTAL interest paid during FY 2025-26 (Apr 2025 – Mar 2026)
-                      Labels: "Interest paid", "Total interest", "Interest for the year",
-                      "Interest component", "Interest charged", "Finance charges",
-                      "Interest amount", "Interest accrued", "Total interest payable",
-                      "Interest paid during FY", "Annual interest"
-                      ⚠ If installment-wise table shown → SUM all interest rows for FY 2025-26
-                      ⚠ Do NOT use outstanding or cumulative interest from previous years
+home_loan_interest
+  → TOTAL interest PAID/DEBITED during the financial year shown in the document
+  Labels: "Interest paid", "Total interest", "Interest for the year",
+          "Interest component", "Interest charged", "Finance charges",
+          "Interest amount", "Total interest paid", "Interest paid during FY",
+          "Annual interest", "Interest accrued during the year",
+          "Interest debited during 20XX-'XX", "Interest debited", "Interest due",
+          "Total Interest Charged"
+  ⚠ The value AFTER a label (e.g. "Interest debited during 2024-'25 : 170732") is 170732 — NOT the year 2024
+  ⚠ Monetary amounts are ≥ 5 digits (≥ 10000). 4-digit numbers like "2024" or "2025" are YEARS — skip them
+  ⚠ If a "Total" / "Grand Total" / "Annual Interest" row is shown → use THAT value directly
+  ⚠ If only month-wise table → SUM only the rows for the FY in question
+  ⚠ "Interest Accrued" ≠ "Interest Paid" — prefer Paid/Debited
+  ⚠ Do NOT use cumulative/outstanding interest or interest from prior years
+  ⚠ Do NOT use the EMI/Total Remittance amount (that is principal + interest combined)
+  ⚠ SPECIAL: If "Simple Interest on Prepayment" or "Prepayment Interest" appears separately,
+     ADD that amount to the main annual interest (both are deductible under Section 24(b))
 
-home_loan_principal → TOTAL principal repaid during FY 2025-26 (Apr 2025 – Mar 2026)
-                      Labels: "Principal paid", "Principal component", "Principal repaid",
-                      "Principal amount", "Repayment of principal", "EMI principal",
-                      "Principal payment", "Capital repaid"
-                      ⚠ If installment-wise table shown → SUM all principal rows for FY 2025-26
+home_loan_principal
+  → TOTAL regular EMI principal REPAID/REMITTED during the financial year
+  Labels: "Principal paid", "Principal component", "Principal repaid",
+          "Principal amount", "Repayment of principal", "EMI principal",
+          "Principal payment", "Capital repaid", "Principal for the year",
+          "Amount remitted towards principal", "Principal remitted"
+  ⚠ Monetary amounts are ≥ 5 digits
+  ⚠ "Total Remittance" = interest + principal combined — do NOT use it for principal alone
+  ⚠ If a "Total Principal" / "Principal Repaid During the Year" row → use THAT directly
+  ⚠ If only month-wise table → SUM only the FY principal rows
 
-loan_account_no     → Loan account or reference number
-                      Labels: "Loan account no", "Account number", "Loan reference",
-                      "Loan ID", "Loan no", "Account no", "Reference no"
+  ⚠ CRITICAL — EXCLUDE ALL PREPAYMENT / LUMP-SUM PRINCIPAL AMOUNTS:
+     Labels to SKIP: "Principal Prepayment", "Prepayment of Principal",
+     "Principal Prepayment at fully disbursed stage", "Part-payment", "Foreclosure amount"
+     These are ONE-TIME lump-sum payments — do NOT add them to home_loan_principal.
+  ⚠ RULE OF THUMB: For a ₹50L–₹1.5Cr home loan, annual EMI principal is typically ₹1L–₹5L.
+     If you see a value ≥ ₹10L labeled "principal", it is almost certainly a prepayment — EXCLUDE it.
+  ⚠ EXAMPLE: Document shows "Amount remitted towards principal during 2024-'25 : 2,97,904"
+             AND "Principal Prepayment at fully disbursed stage : 14,00,000"
+             → home_loan_principal = 297904 (the EMI amount only)
+             → The 1400000 prepayment is IGNORED
 
-bank_name           → Bank or NBFC name (usually in header or letterhead)
-                      Examples: HDFC Bank, SBI, ICICI Bank, Axis Bank, Kotak Bank,
-                      LIC Housing Finance, PNB Housing, HDFC Ltd, Bajaj Finserv,
-                      Aditya Birla Housing, Tata Capital, Indiabulls Housing
+loan_account_no
+  → Loan account / reference number
+  Labels: "Loan account no", "Account number", "Loan no", "Loan reference",
+          "Loan ID", "Account no", "Reference no", "Loan Account Number"
 
-loan_outstanding    → Remaining principal outstanding at end of FY or document date
-                      Labels: "Outstanding balance", "Principal outstanding", "Closing balance",
-                      "Balance outstanding", "Outstanding principal", "Principal balance"
+bank_name
+  → Lender's name from header / letterhead
+  Examples: HDFC Bank, SBI, ICICI Bank, Axis Bank, Kotak Bank,
+            LIC Housing Finance, PNB Housing, HDFC Ltd, Bajaj Finserv,
+            Aditya Birla Housing, Tata Capital, Indiabulls Housing, GIC Housing
+
+loan_outstanding
+  → Remaining principal balance at end of the financial year or document date
+  Labels: "Outstanding balance", "Principal outstanding", "Closing balance",
+          "Balance outstanding", "Outstanding principal", "Principal balance",
+          "Opening balance" (if closing not available)
 
 ━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• Annual totals only — Apr 2025 to Mar 2026
-• If monthly/quarterly breakdown shown, SUM interest and principal separately
+• Extract totals for the financial year labeled in the document
+• home_loan_interest + home_loan_principal ≈ total EMI paid for the year (sanity check)
 • All amounts as plain integers in INR (strip ₹, Rs., commas, decimals)
 • Use 0 for amounts not found; "" for text fields not found
-• NEVER invent or estimate values
+• NEVER invent, estimate, or calculate values — extract only what is printed
 
 Return ONLY valid JSON:
 {
@@ -151,65 +310,111 @@ Return ONLY valid JSON:
   "loan_outstanding": 0
 }""",
 
-    "school": """You are an Indian tax expert. Extract school fee data for ITR filing (FY 2025-26 / AY 2026-27).
+    "school": """You are an Indian tax expert. Extract school fee data for ITR filing.
 
 DOCUMENT TYPE: School Fee Receipt / Tuition Fee Certificate / Fee Payment Acknowledgement
 
-━━━ CRITICAL: Only TUITION FEES qualify for Section 80C. ━━━━━━━━━━━━━━━━━
-Do NOT include: development fees, building fund, transport, hostel, uniform,
-books, lunch, activity fees, exam fees, or any non-tuition charges.
-ONLY tuition / academic / course fees count.
+━━━ CRITICAL: This document may contain MULTIPLE SEPARATE RECEIPTS ━━━━━━━━━━━━━
+Each receipt is a different payment (e.g., Admission, Term 1, Term 2, Term 3, Textbooks).
+You MUST read EVERY receipt and sum only the qualifying tuition amounts.
 
-━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━ WHICH FEES QUALIFY FOR SECTION 80C? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-school_fees → ANNUAL tuition fees paid during FY 2025-26 (Apr 2025 – Mar 2026)
-              Labels: "Tuition fees", "Tuition fee", "School fees", "Academic fees",
-              "Course fees", "Fees paid", "Total tuition", "Tuition charges"
-              ⚠ If receipt shows term/quarterly fees → SUM all payments in FY 2025-26
-              ⚠ Exclude development fee, building fund, transport, hostel etc.
+INCLUDE (tuition / academic fees — these qualify):
+  ✓ Term fee, Tuition fee, Semester fee, School fee (when it is the main per-term charge)
+  ✓ Foundation course fee (if it is a regular school curriculum subject)
+  ✓ Annual charges labeled "School Fee" / "Academic Fee"
 
-school_name → Full name of the school or institution (from header or letterhead)
+EXCLUDE (non-tuition — these do NOT qualify for 80C):
+  ✗ Admission fee / Registration fee / Enrollment fee
+  ✗ Development fee, Building fund, Infrastructure fee
+  ✗ Textbook fee / Book fee / Stationery fee
+  ✗ Transport / Bus fee
+  ✗ Hostel / Boarding fee
+  ✗ Uniform / Dress / Clothing fee
+  ✗ Lunch / Canteen / Mess fee
+  ✗ Activity fee / Sports fee / Creative Learning fee
+  ✗ LOC (Library / Optional Course) fee
+  ✗ Exam fee
+  ✗ Donation
+
+━━━ HOW TO EXTRACT school_fees ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Step 1: Identify each SEPARATE RECEIPT in the document (each has its own date, receipt no, amount).
+Step 2: For each receipt, determine the fee type:
+  - If the receipt is ONLY for Admission Fee or Textbooks → SKIP it entirely (amount = 0)
+  - If the receipt is a TERM FEE / SCHOOL FEE receipt → include the tuition portion
+Step 3: For receipts that have a line-by-line breakdown:
+  - Add only lines labeled as Term Fee / Tuition Fee
+  - Exclude lines for LOC, Activity, Creative Learning, etc.
+  - Example receipt breakdown → "Term Fee: 9,660 | LOC: 300 | Creative Learning: 1,200 | Total: 11,160"
+    → take 9,660 only (not the 11,160 total, because 300+1,200 are non-tuition)
+Step 4: If a receipt shows ONLY a total with no line breakdown → include the full total
+  (most term-fee receipts are pure tuition)
+Step 5: SUM the qualifying amounts from ALL receipts
+
+school_fees → SUM of qualifying tuition amounts across ALL receipts in this document
+  ⚠ If there is a single Grand Total row covering all receipts → use THAT (no double count)
+  ⚠ If receipts are separate (no grand total) → sum each receipt's qualifying amount manually
+  ⚠ Do NOT include receipts for Admission Fee or Textbooks in the total
+
+school_name → Full name of the school from header or letterhead
+child_name  → Name of the student (from "Student Name" / "Pupil Name" / "Name" on receipts)
 
 ━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• Annual tuition total only (Apr 2025 – Mar 2026)
+• Sum tuition fees across ALL qualifying receipts in the document
+• Exclude admission fee, textbooks, transport, hostel, activity, LOC, creative learning
 • school_fees as plain integer in INR
-• NEVER invent values
+• NEVER invent values — if a fee type is genuinely ambiguous, include it
 
 Return ONLY valid JSON:
 {
   "school_fees": 0,
-  "school_name": ""
+  "school_name": "",
+  "child_name": ""
 }""",
 
     "nps": """You are an Indian tax expert. Extract NPS data for ITR filing (FY 2025-26 / AY 2026-27).
 
-DOCUMENT TYPE: NPS Account Statement / PRAN Statement / NPS Transaction Statement
+DOCUMENT TYPE: NPS Account Statement / PRAN Statement / CRA Transaction Statement / NPS Passbook
+
+━━━ CRITICAL: FY 2025-26 = Apr 2025 to Mar 2026 ONLY. Tier I ONLY. ━━━━━
 
 ━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-nps_pran     → PRAN (Permanent Retirement Account Number) — 12-digit number
-               Labels: "PRAN", "PRAN No", "PRAN Number", "Permanent Retirement Account"
-               Strip spaces if shown as groups: "1234 5678 9012" → "123456789012"
+nps_pran
+  → Permanent Retirement Account Number — exactly 12 digits
+  Labels: "PRAN", "PRAN No", "PRAN Number", "Permanent Retirement Account Number"
+  Format: strip spaces/dashes → "110012345678" (12 digits, no letters)
+  ⚠ If shown as "1100 1234 5678" → return "110012345678"
 
-nps_self     → Total SUBSCRIBER / EMPLOYEE / OWN Tier-I contribution for FY 2025-26
-               Labels: "Subscriber contribution", "Employee contribution", "Own contribution",
-               "Voluntary contribution", "Tier I - Subscriber", "Self contribution",
-               "Tier 1 employee", "Personal contribution", "Subscriber share"
-               ⚠ Tier I ONLY — EXCLUDE Tier II contributions
-               ⚠ Annual total for Apr 2025 – Mar 2026 only
+nps_self
+  → Total Tier-I SUBSCRIBER / EMPLOYEE / OWN contribution for FY 2025-26
+  Labels: "Subscriber contribution", "Employee contribution", "Own contribution",
+          "Voluntary contribution", "Tier I - Subscriber", "Self contribution",
+          "Tier 1 employee", "Personal contribution", "Subscriber share",
+          "Employee's own NPS contribution", "Contribution by subscriber"
+  ⚠ Tier I ONLY — do NOT include Tier II (Tier II is a separate voluntary savings account)
+  ⚠ Use the ANNUAL TOTAL for Apr 2025–Mar 2026 only
+  ⚠ If monthly rows shown → SUM only rows dated Apr 2025 to Mar 2026
+  ⚠ Exclude government/employer contributions from this field
 
-nps_employer → Total EMPLOYER / GOVERNMENT / CORPORATE Tier-I contribution for FY 2025-26
-               Labels: "Employer contribution", "Government contribution", "Corporate contribution",
-               "Company contribution", "Employer share", "Tier I - Employer", "Employer's NPS"
-               ⚠ Tier I ONLY — use 0 if not present
+nps_employer
+  → Total Tier-I EMPLOYER / GOVERNMENT / CORPORATE contribution for FY 2025-26
+  Labels: "Employer contribution", "Government contribution", "Corporate contribution",
+          "Company contribution", "Employer share", "Tier I - Employer", "Employer's NPS",
+          "Contribution by employer", "Government's NPS contribution"
+  ⚠ Tier I ONLY — use 0 if no employer contribution present
+  ⚠ Annual total for Apr 2025–Mar 2026 only
 
 ━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• FY 2025-26 (Apr 2025 – Mar 2026) totals only
-• All amounts as plain integers in INR
+• Tier I and Tier II are SEPARATE accounts — only Tier I qualifies for tax deduction
+• FY 2025-26 (Apr 2025 – Mar 2026) totals only — ignore prior years
+• All amounts as plain integers in INR (strip ₹, commas)
 • Use 0 for amounts not found; "" for PRAN not found
-• NEVER invent values
+• NEVER invent or guess any value
 
 Return ONLY valid JSON:
 {
@@ -218,84 +423,135 @@ Return ONLY valid JSON:
   "nps_employer": 0
 }""",
 
-    "insurance": """You are an Indian tax expert. Extract insurance data for ITR filing (FY 2025-26 / AY 2026-27).
+    "insurance": """You are an Indian tax expert. Extract insurance data for ITR filing.
 
-DOCUMENT TYPE: Insurance Premium Receipt / Policy Document / Premium Payment Acknowledgement
+DOCUMENT TYPE: Insurance Premium Receipt / Policy Document / Premium Payment Certificate / Renewal Notice
+
+━━━ CRITICAL: premium_amount = TOTAL GROSS PREMIUM PAID (INCLUDING GST/taxes) ━━━
+
+For Section 80C (life insurance) and Section 80D (health insurance), the FULL AMOUNT ACTUALLY
+PAID including all taxes (GST, service tax, cess) is the deductible amount.
+"Net Premium" (before GST) is LESS than what was paid — DO NOT use it alone.
 
 ━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-policy_no      → Policy or certificate number
-                 Labels: "Policy No", "Policy Number", "Policy ID", "Plan No",
-                 "Certificate No", "Contract No", "Reference No"
+policy_no
+  → Policy / certificate / proposal number
+  Labels: "Policy No", "Policy Number", "Policy ID", "Plan No", "Certificate No",
+          "Contract No", "Reference No", "Policy Reference"
 
-insurer_name   → Insurance company name (from header / letterhead)
-                 Examples: LIC of India, HDFC Life, ICICI Prudential, Max Life, SBI Life,
-                 Bajaj Allianz, Tata AIA, Kotak Mahindra Life, PNB MetLife, Aditya Birla Sun Life,
-                 Star Health, Niva Bupa (formerly Max Bupa), Care Health, Religare Health,
-                 New India Assurance, United India, National Insurance, Oriental Insurance
+insurer_name
+  → Insurance company name (from header or letterhead)
+  Life: LIC of India, HDFC Life, ICICI Prudential, Max Life, SBI Life, Bajaj Allianz Life,
+        Tata AIA, Kotak Life, PNB MetLife, Aditya Birla Sun Life
+  Health: Star Health, Niva Bupa, Care Health, Religare Health, New India Assurance,
+          United India, National Insurance, Oriental Insurance, HDFC ERGO Health,
+          Aditya Birla Health, ManipalCigna, Bajaj Allianz Health
 
-premium_amount → ANNUAL premium ACTUALLY PAID in FY 2025-26 (Apr 2025 – Mar 2026)
-                 Labels: "Premium paid", "Premium amount", "Amount paid", "Amount received",
-                 "Total premium", "Net premium", "Premium due", "Annual premium",
-                 "Installment premium", "Premium receipt amount"
-                 ⚠ If quarterly receipt → multiply by 4 for annual
-                 ⚠ If half-yearly receipt → multiply by 2 for annual
-                 ⚠ Use amount ACTUALLY PAID this FY, not future or overdue premium
+premium_amount
+  → The GROSS TOTAL premium actually paid on this receipt (including GST)
 
-sum_assured    → Life cover / insured amount
-                 Labels: "Sum assured", "Sum insured", "Coverage amount", "Life cover",
-                 "Policy amount", "Insured amount", "Face value", "Death benefit"
+  Priority — use the FIRST label found in this order:
+  1. "Gross Premium" / "Total Premium" / "Total Amount Paid" / "Amount Received"
+     → This IS the full amount including GST — USE THIS
+  2. "Premium Collected" / "Annual Premium" / "Premium Paid"
+     → Use if labeled as total/gross or if no breakdown is shown
+  3. If ONLY "Net Premium" shown with GST itemized separately:
+     → ADD: Net Premium + CGST + SGST (or IGST) = Total. Use the total.
 
-coverage_type  → Exactly "life" or "health" — nothing else:
-                 "life"   → life insurance, term plan, ULIP, endowment, money-back, whole life
-                 "health" → mediclaim, health insurance, family floater, critical illness, top-up
+  ⚠ "Net Premium" / "Basic Premium" / "Net Amount" = premium BEFORE GST — DO NOT use alone
+  ⚠ EXAMPLE: "Net Premium: 22,107 | CGST: 1,990 | SGST: 1,990 | Gross Premium: 26,086"
+             → use 26,086 (gross), NOT 22,107 (net)
+  ⚠ EXAMPLE: "Net Premium: 37,173 | CGST: 3,346 | SGST: 3,346 | Total: 43,865"
+             → use 43,865 (total), NOT 37,173
+  ⚠ If receipt is QUARTERLY → use the receipt amount as-is (do NOT multiply by 4)
+  ⚠ Use amount ACTUALLY PAID — NOT "premium due", "renewal premium", or future installments
+
+insured_for
+  → WHO is covered by this policy (determines the Section 80D limit that applies)
+  Allowed values (use EXACTLY one):
+  "self_family"   → self / spouse / children (family floater or individual for self)
+  "parent"        → parent(s) who are NOT senior citizens (below 60 years old)
+  "parent_senior" → parent(s) who ARE senior citizens (aged 60 or above)
+
+  How to determine:
+  - Look at the insured person's name, relationship, and age in the policy schedule
+  - If the insured is named as Father / Mother / Parent and age is shown as 60+ → "parent_senior"
+  - If the insured is named as Father / Mother and age is below 60 → "parent"
+  - If the insured is the policyholder / self / spouse / child → "self_family"
+  - If it's a family floater covering self+spouse+children → "self_family"
+  ⚠ Check the actual insured name and age — do not assume
+
+sum_assured
+  → Life cover or sum insured amount
+  Labels: "Sum assured", "Sum insured", "Coverage amount", "Life cover",
+          "Policy amount", "Insured amount", "Face value", "Death benefit"
+
+coverage_type
+  → EXACTLY "life" or "health" — no other values allowed
+  "life"   → life insurance, term plan, ULIP, endowment, money-back, whole life, pension
+  "health" → mediclaim, health insurance, family floater, critical illness, hospital cash, top-up
+  ⚠ Pays on death → "life"; pays on hospitalisation → "health"
 
 ━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• premium_amount must be ANNUAL total paid in FY 2025-26
+• premium_amount = GROSS amount paid (including GST) — never just the net/base premium
 • All amounts as plain integers in INR (strip ₹, Rs., commas, decimals)
 • coverage_type must be exactly "life" or "health"
-• NEVER invent values
+• NEVER invent or estimate values
 
 Return ONLY valid JSON:
 {
   "policy_no": "",
   "insurer_name": "",
   "premium_amount": 0,
+  "insured_for": "self_family",
   "sum_assured": 0,
-  "coverage_type": "life"
+  "coverage_type": "health"
 }""",
 
     "donation": """You are an Indian tax expert. Extract donation data for ITR filing (FY 2025-26 / AY 2026-27).
 
-DOCUMENT TYPE: Donation Receipt / 80G Certificate / Contribution Receipt
+DOCUMENT TYPE: Donation Receipt / 80G Certificate / Contribution Receipt / Charitable Trust Receipt
+
+━━━ CRITICAL: Donation must have been made in FY 2025-26 (Apr 2025–Mar 2026) ━━
 
 ━━━ FIELDS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-donation_amount   → Total amount donated in INR
-                    Labels: "Amount donated", "Donation amount", "Contribution",
-                    "Gift amount", "Amount received", "Total donation", "Received from"
+donation_amount
+  → Total amount DONATED (cash or cheque/NEFT) in INR
+  Labels: "Amount donated", "Donation amount", "Contribution", "Gift amount",
+          "Amount received", "Total donation", "Net donation", "Received from donor",
+          "Amount (INR)", "Donation", "Received a sum of"
+  ⚠ If multiple donations in one receipt → use the TOTAL / SUM
+  ⚠ Use amount actually donated — not "eligible amount" or "deductible amount" (those are post-cap)
 
-organization_name → Full name of the trust / NGO / charity
-                    Labels: "Name of institution", "Donee name", "Trust name",
-                    "Organisation name", "Recipient", header / letterhead name
+organization_name
+  → Full name of the trust / NGO / charity that issued the receipt
+  Labels: "Name of institution", "Donee name", "Trust name", "Organisation name",
+          "Name of the fund / institution", header / letterhead name
+  ⚠ Use the legal name as printed, not abbreviations
 
-donee_pan         → PAN of the ORGANIZATION receiving the donation (needed for 80G)
-                    Format: 5 letters + 4 digits + 1 letter (e.g. AAABT1234Z)
-                    Labels: "PAN", "PAN No", "PAN of institution", "Donee PAN", "Trust PAN"
-                    ⚠ This is the ORGANIZATION'S PAN — NOT the donor's PAN
-                    ⚠ Leave "" if not clearly printed — do NOT guess
+donee_pan
+  → PAN of the ORGANIZATION (not the donor) — needed for 80G claim
+  Format: exactly 10 characters — 5 letters + 4 digits + 1 letter (e.g. AAABT1234Z)
+  Labels: "PAN", "PAN No", "PAN of institution", "Donee PAN", "Trust PAN",
+          "PAN of donee", "Institution PAN", "Fund PAN"
+  ⚠ This is the ORGANIZATION's PAN — NEVER the donor's PAN
+  ⚠ Return "" if not clearly and fully printed — do NOT guess or invent any PAN
+  ⚠ If you see two PANs, use the one labeled as the organization's / donee's PAN
 
-receipt_number    → Receipt or certificate number
-                    Labels: "Receipt no", "Certificate no", "Reference no",
-                    "Acknowledgement no", "Serial no", "Coupon no"
+receipt_number
+  → Receipt or certificate serial number
+  Labels: "Receipt no", "Certificate no", "Reference no", "Acknowledgement no",
+          "Serial no", "Coupon no", "Receipt number", "80G certificate no"
 
 ━━━ RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• Donation must be in FY 2025-26 (Apr 2025 – Mar 2026)
-• All amounts as plain integers in INR
-• NEVER invent PAN numbers — only extract if clearly printed
-• NEVER invent values
+• Only extract donations confirmed to be in FY 2025-26 — ignore prior year receipts
+• All amounts as plain integers in INR (strip ₹, commas)
+• NEVER invent or guess PAN numbers — only extract if clearly printed character-by-character
+• NEVER invent any values
 
 Return ONLY valid JSON:
 {
@@ -373,34 +629,56 @@ def _regex_fallback(text, doc_type):
     t = text.replace(',', '').replace('Rs.', '').replace('INR', '')
 
     if doc_type == 'homeloan':
-        # Interest — try specific labels first, then generic
+        # Minimum monetary value for homeloan — must be ≥ 10000 to exclude years like 2025
+        _MIN_LOAN_AMT = 10000
+
+        # Interest — specific labels first (most reliable), then generic
         for pat in [
-            r'total interest(?:\s+paid)?(?:\s+for\s+the\s+year)?[^\d]*(\d[\d,]+)',
-            r'interest paid(?:\s+during)?(?:\s+the\s+year)?[^\d]*(\d[\d,]+)',
-            r'interest for the year[^\d]*(\d[\d,]+)',
-            r'interest amount[^\d]*(\d[\d,]+)',
-            r'interest component[^\d]*(\d[\d,]+)',
-            r'interest[^\d]{0,30}(\d{4,}[\d,]*)',
+            r'interest\s+debited\s+during[^\d]*(\d{5,})',        # "Interest debited during 2025-'26 : 379030"
+            r'total interest(?:\s+paid)?(?:\s+for\s+the\s+year)?[^\d]*(\d{5,})',
+            r'interest paid(?:\s+during)?(?:\s+the\s+year)?[^\d]*(\d{5,})',
+            r'interest for the year[^\d]*(\d{5,})',
+            r'interest amount[^\d]*(\d{5,})',
+            r'interest component[^\d]*(\d{5,})',
+            r'interest charged[^\d]*(\d{5,})',
+            r'interest[^\d]{0,20}(\d{5,})',                       # generic — ≥5 digits only (excludes years)
         ]:
             m = re.search(pat, t, re.I)
             if m:
                 val = int(m.group(1).replace(',', ''))
-                if val > 1000:
+                if val >= _MIN_LOAN_AMT:
                     result['home_loan_interest'] = val
                     break
-        # Principal
+
+        # Principal — specific labels first, EXCLUDING prepayment/lump-sum lines
+        _PREPAYMENT_MARKERS = re.compile(
+            r'prepayment|pre-payment|pre\s+payment|fully\s+disbursed|foreclosure|part.?payment',
+            re.I
+        )
         for pat in [
-            r'principal paid[^\d]*(\d[\d,]+)',
-            r'principal repaid[^\d]*(\d[\d,]+)',
-            r'principal component[^\d]*(\d[\d,]+)',
-            r'principal amount[^\d]*(\d[\d,]+)',
-            r'repayment of principal[^\d]*(\d[\d,]+)',
-            r'principal[^\d]{0,30}(\d{4,}[\d,]*)',
+            r'amount\s+remitted\s+towards\s+principal\s+during[^\d]*(\d{5,})',  # "Amount Remitted towards principal during 2024-'25 : 297904"
+            r'principal\s+repaid\s+during[^\d]*(\d{5,})',
+            r'repayment\s+of\s+principal\s+during[^\d]*(\d{5,})',
+            r'principal\s+component[^\d]*(\d{5,})',
+            r'principal\s+remitted\s+during[^\d]*(\d{5,})',
+            r'principal\s+paid\s+during[^\d]*(\d{5,})',
+            r'amount\s+remitted\s+towards\s+principal[^\d]*(\d{5,})',
+            r'principal\s+paid[^\d]*(\d{5,})',
+            r'principal\s+repaid[^\d]*(\d{5,})',
+            r'principal\s+amount[^\d]*(\d{5,})',
+            r'repayment\s+of\s+principal[^\d]*(\d{5,})',
+            r'principal\s+remitted[^\d]*(\d{5,})',
         ]:
             m = re.search(pat, t, re.I)
             if m:
+                # Check that the matched line does NOT contain prepayment indicators
+                line_start = t.rfind('\n', 0, m.start()) + 1
+                line_end_idx = t.find('\n', m.end())
+                line = t[line_start:line_end_idx if line_end_idx != -1 else len(t)]
+                if _PREPAYMENT_MARKERS.search(line):
+                    continue  # This is a prepayment line — skip it
                 val = int(m.group(1).replace(',', ''))
-                if val > 1000:
+                if val >= _MIN_LOAN_AMT:
                     result['home_loan_principal'] = val
                     break
         # Loan account
@@ -461,24 +739,51 @@ def _regex_fallback(text, doc_type):
                 break
 
     elif doc_type == 'insurance':
+        # Prefer GROSS premium (including GST) over net premium
         for pat in [
-            r'premium\s+paid[^\d]*(\d[\d,]+)',
-            r'annual\s+premium[^\d]*(\d[\d,]+)',
-            r'amount\s+paid[^\d]*(\d[\d,]+)',
-            r'premium\s+amount[^\d]*(\d[\d,]+)',
-            r'premium[^\d]{0,20}(\d{3,}[\d,]*)',
+            r'gross\s+premium[^\d]*(\d[\d,]+)',            # "Gross Premium: 26,086" — total incl. GST
+            r'total\s+premium\s+paid[^\d]*(\d[\d,]+)',     # "Total Premium Paid"
+            r'total\s+amount\s+paid[^\d]*(\d[\d,]+)',      # "Total Amount Paid"
+            r'amount\s+received[^\d]*(\d[\d,]+)',           # "Amount Received" by insurer
+            r'premium\s+collected[^\d]*(\d[\d,]+)',         # "Premium Collected"
+            r'annual\s+premium[^\d]*(\d[\d,]+)',            # "Annual Premium"
+            r'total\s+premium[^\d]*(\d[\d,]+)',             # "Total Premium"
+            r'premium\s+paid[^\d]*(\d[\d,]+)',              # "Premium Paid" (may be gross or net)
+            r'premium\s+amount[^\d]*(\d[\d,]+)',            # "Premium Amount"
+            r'premium[^\d]{0,20}(\d{4,}[\d,]*)',           # Generic (4+ digits to avoid small numbers)
         ]:
             m = re.search(pat, t, re.I)
             if m:
-                result['premium_amount'] = int(m.group(1).replace(',', ''))
+                # If we matched a "net premium" line, try to add GST if found on nearby lines
+                raw_val = int(m.group(1).replace(',', ''))
+                matched_line_start = t.rfind('\n', 0, m.start()) + 1
+                matched_line_end = t.find('\n', m.end())
+                matched_line = t[matched_line_start:matched_line_end if matched_line_end != -1 else len(t)].lower()
+                if 'net' in matched_line or 'basic' in matched_line:
+                    # Try to find gross/total premium nearby
+                    gross_m = re.search(r'(?:gross|total)\s+premium[^\d]*(\d[\d,]+)', t, re.I)
+                    if gross_m:
+                        raw_val = int(gross_m.group(1).replace(',', ''))
+                result['premium_amount'] = raw_val
                 break
+
         m = re.search(r'(?:policy\s+no|policy\s+number|policy\s+id)[^\w]*([A-Z0-9\-]{6,20})', t, re.I)
         if m: result['policy_no'] = m.group(1).strip()
+
         # Coverage type
         if re.search(r'\b(mediclaim|health|floater|critical illness)\b', t, re.I):
             result['coverage_type'] = 'health'
         else:
             result['coverage_type'] = 'life'
+
+        # insured_for: detect parent (senior citizen) vs self/family
+        if re.search(r'\b(father|mother|parent)\b', t, re.I):
+            if re.search(r'\b(senior\s+citizen|age[d]?\s*[:\-]?\s*[6-9]\d|7[0-9]\s*years?|8[0-9]\s*years?)\b', t, re.I):
+                result['insured_for'] = 'parent_senior'
+            else:
+                result['insured_for'] = 'parent'
+        else:
+            result['insured_for'] = 'self_family'
 
     elif doc_type == 'donation':
         for pat in [
@@ -574,6 +879,58 @@ def _sum_all_hra_from_text(text):
         return total
 
     return None  # 0 or 1 row — leave to AI
+
+
+def _deterministic_ytd_override(text, result):
+    """
+    For Standard/Actual/YTD payslips the AI often reads the Actual (monthly)
+    column instead of the rightmost YTD (annual) column.
+
+    Strategy: for each payslip field, find the first matching text line and
+    take the LAST salary-scale number (≥ 1000) on that line.
+    - Standard/Actual/YTD row:  [99133, 99133, 1168656]  → last = 1168656 ✓
+    - Single-value monthly row: [99133]                  → last = 99133  ✓
+
+    Override only when the deterministic value is ≥ 1.5× the AI value
+    (clear evidence the AI read a smaller, wrong column) or when AI returned 0.
+    """
+    if not text:
+        return result
+
+    FIELD_LABELS = {
+        'basic_salary':        [r'\bbasic\b(?! tax)', r'basic\s+salary', r'basic\s+pay', r'basic\s+wages'],
+        'hra_received':        [r'\bhra\b', r'house\s+rent\s+allowance'],
+        'special_allowance':   [r'special\s+allowance', r'special\s+pay\b', r'non-fbp\s+other', r'other\s+allowance\b'],
+        'lta':                 [r'\blta\b', r'leave\s+travel\s+allowance', r'leave\s+travel\s+concession', r'\bltc\b'],
+        'pf_employee':         [r'employee.{0,15}pf\b', r'\bpf\b.{0,5}employee', r'\bepf\b(?!.*employer)', r'provident\s+fund(?!.*employer)'],
+        'tds_paid':            [r'income\s+tax\s+deduction', r'income\s+tax\b(?!.*return)', r'tax\s+deducted(?!\s+at\s+source\s+u)'],
+        'professional_tax':    [r'professional\s+tax', r'prof\.?\s*tax\b', r'\bpt\b(?=\s+deduction|\s+paid|\s+amount)'],
+        'gross_salary':        [r'gross\s+pay\b', r'gross\s+salary\b', r'gross\s+earnings\b', r'\btotal\s+earnings?\b', r'\btotal\s+salary\b'],
+        'pf_employer':         [r'employer.{0,15}pf\b', r'epf.*employer'],
+        'car_lease_allowance': [r'car\s+lease\b', r'car\s+allowance\b', r'vehicle\s+allowance'],
+        'uniform_allowance':   [r'uniform\s+allowance', r'dress\s+allowance'],
+    }
+
+    clean_text = text.replace(',', '').replace('₹', '').replace('Rs.', '').replace('INR', '')
+    lines = clean_text.split('\n')
+
+    for field, patterns in FIELD_LABELS.items():
+        for line in lines:
+            if not any(re.search(pat, line, re.I) for pat in patterns):
+                continue
+            # All numbers with ≥ 4 digits (≥ 1000) — excludes percentages, codes, years
+            salary_nums = [int(n) for n in re.findall(r'\d{4,}', line) if int(n) >= 1000]
+            if not salary_nums:
+                continue
+            last_val = salary_nums[-1]  # rightmost = YTD column in 3-column payslips
+            current = result.get(field, 0) or 0
+            if current == 0 or last_val > current * 1.5:
+                if current != last_val:
+                    print(f"[YTD_OVERRIDE] {field}: AI={current} → rightmost={last_val}")
+                result[field] = last_val
+            break  # first matching line wins for this field
+
+    return result
 
 
 def _preprocess_ocr_text(text):
@@ -682,24 +1039,26 @@ def deterministic_extract(text, doc_type="form16"):
                     return s, 'heuristic'
         return '', 'none'
 
-    # field labels map
+    # field labels map — ordered from most-specific to least-specific within each list
     labels_map = {
-        'gross_salary': [r'gross salary', r'gross total', r'total gross', r'total earnings', r'total earning\b', r'gross pay', r'gross income', r'total remuneration', r'ctc'],
-        'basic_salary': [r'basic salary', r'\bbasic\b', r'basic pay'],
-        'hra_received': [r'hra received', r'house rent allowance', r'\bhra\b'],
-        'lta': [r'leave travel allowance', r'\blta\b', r'leave travel'],
-        'special_allowance': [r'special allowance', r'special pay'],
-        'car_lease_allowance': [r'car lease allowance', r'car allowance', r'car lease'],
-        'uniform_allowance': [r'uniform allowance', r'\buniform\b'],
-        'pf_employee': [r'employee pf', r'epf employee', r'pf employee', r'provident fund employee', r'pf \(employee\)', r'employee contribution.*pf', r'pf contribution'],
-        'pf_employer': [r'employer pf', r'epf employer', r'pf employer', r'provident fund employer', r'pf \(employer\)', r'employer contribution.*pf'],
-        'tds_paid': [r'income tax\b', r'tds deducted', r'tds paid', r'tax deducted at source', r'\btds\b'],
-        'professional_tax': [r'professional tax', r'prof tax', r'\bprof\. tax\b', r'p\.tax'],
-        'gratuity': [r'gratuity'],
-        'leave_encashment': [r'leave encashment', r'encashment'],
-        'section_17_1': [r'section 17\(1\)', r'section 17 1', r'section 17-1'],
-        'section_17_2': [r'section 17\(2\)', r'section 17 2', r'section 17-2'],
-        'section_17_3': [r'section 17\(3\)', r'section 17 3', r'section 17-3'],
+        # Form 16: "Gross Salary" is the row after section_17_x rows; never use CTC/Net Salary
+        'gross_salary': [r'gross salary', r'total earnings?\b', r'total earning\b', r'gross pay\b', r'gross income\b', r'total remuneration', r'gross total\b', r'total gross\b'],
+        'basic_salary': [r'basic salary', r'basic pay\b', r'\bbasic\b(?! tax)'],
+        'hra_received': [r'hra received', r'house rent allowance received', r'hra exemption', r'house rent allowance\b', r'\bhra\b'],
+        'lta': [r'leave travel allowance', r'leave travel concession', r'\bltc\b', r'\blta\b'],
+        'special_allowance': [r'special allowance', r'special pay\b'],
+        'car_lease_allowance': [r'car lease allowance', r'car lease\b', r'vehicle allowance', r'car allowance'],
+        'uniform_allowance': [r'uniform allowance', r'dress allowance', r'clothing allowance'],
+        'pf_employee': [r'employee(?:\'s)? pf', r'epf employee', r'pf \(employee\)', r'employee epf', r'provident fund.*employee', r'pf contribution \(ee\)', r'\bepf\b(?!.*employer)'],
+        'pf_employer': [r'employer(?:\'s)? pf', r'epf employer', r'pf \(employer\)', r'employer epf', r'provident fund.*employer', r'pf contribution \(er\)'],
+        # tds_paid: specific patterns first; avoid matching "total deductions" or salary rows
+        'tds_paid': [r'tax deducted at source\b', r'tds deducted\b', r'tds paid\b', r'income tax deducted\b', r'tax deducted u/s 192', r'\bincome tax\b(?!.*return)'],
+        'professional_tax': [r'professional tax', r'profession tax', r'prof(?:essional)?\.? tax\b', r'section 16\(iii\)', r'\bp\.?tax\b', r'\bpt\b(?= deduction| paid| amount)'],
+        'gratuity': [r'\bgratuity\b'],
+        'leave_encashment': [r'leave encashment', r'leave salary\b', r'\bencashment\b'],
+        'section_17_1': [r'section 17\(1\)', r'salary as per.*17\(1\)', r'salary u/?s 17\(1\)', r'u/s 17\(1\)', r'17\s*\(1\)'],
+        'section_17_2': [r'section 17\(2\)', r'perquisites.*17\(2\)', r'perquisites u/?s 17\(2\)', r'17\s*\(2\)'],
+        'section_17_3': [r'section 17\(3\)', r'profits in lieu.*17\(3\)', r'17\s*\(3\)'],
     }
 
     # textual fields
@@ -831,12 +1190,10 @@ def extract_from_text(text, doc_type="payslip"):
                 print(f"[EXTRACT_TEXT][form16] Deterministic found only {found} — calling AI")
 
         elif doc_type == "homeloan":
-            det_result = _regex_fallback(text, doc_type)
-            if det_result.get("home_loan_interest", 0) > 0:
-                print(f"[EXTRACT_TEXT][homeloan] Regex found interest={det_result['home_loan_interest']} — skipping AI call")
-                result = det_result
-            else:
-                print(f"[EXTRACT_TEXT][homeloan] Regex found no interest — calling AI")
+            # Always call AI for homeloan — documents can contain prepayments, multi-year rows,
+            # and simple interest on prepayments that require semantic understanding.
+            # Regex is kept as fallback only (used below if AI returns nothing).
+            print(f"[EXTRACT_TEXT][homeloan] Always calling AI for accurate principal/interest extraction")
 
         elif doc_type == "nps":
             det_result = _regex_fallback(text, doc_type)
@@ -860,11 +1217,22 @@ def extract_from_text(text, doc_type="payslip"):
             result = _parse_json(raw)
 
         if not result:
-            # Try regex fallback for investment types
             result = _regex_fallback(text, doc_type) or {}
 
         if not result:
             return {"success": False, "error": "No data extracted from text"}
+
+        # ── Form 16: section_17_1 → gross_salary fallback ────────────────────
+        # Form 16 Part B lists salary under "Section 17(1)" rather than a
+        # "Gross Salary" label. If the AI returns section_17_1 but gross_salary=0,
+        # compute gross_salary as the sum of all 17(x) components.
+        if doc_type == "form16" and not result.get("gross_salary", 0):
+            s17 = (result.get("section_17_1", 0) or 0) + \
+                  (result.get("section_17_2", 0) or 0) + \
+                  (result.get("section_17_3", 0) or 0)
+            if s17 > 0:
+                result["gross_salary"] = s17
+                print(f"[EXTRACT_TEXT][form16] gross_salary derived from section_17_x sum = {s17}")
 
         # Pull out assumptions if AI returned them inside the JSON
         assumptions = []
@@ -872,20 +1240,60 @@ def extract_from_text(text, doc_type="payslip"):
             assumptions = result.pop("assumptions")
 
         is_ytd = result.pop("is_ytd", False)
-        if is_ytd:
-            assumptions.insert(0, "YTD payslip detected — values extracted from Grand Total / annual column (already annual, no ×12 needed)")
-        elif doc_type == "payslip":
-            assumptions.insert(0, "Monthly payslip detected — values are monthly; annualize by ×12 for tax calculation")
+
+        # ── YTD column override ───────────────────────────────────────────────
+        # Fixes Standard/Actual/YTD payslips where the AI reads the Actual
+        # (monthly) column instead of the rightmost YTD (annual) column.
+        if doc_type == "payslip":
+            result = _deterministic_ytd_override(text, result)
 
         # ── Deterministic HRA override for payslips ──────────────────────────
-        # AI often picks only the largest HRA component. Sum ALL HRA rows from
-        # the raw text to guarantee correctness regardless of AI behaviour.
+        # Handles multi-component HRA (FBP HRA + Non-FBP HRA → TOTAL HRA).
+        # Run AFTER _deterministic_ytd_override so it can refine if needed.
         if doc_type == "payslip":
             hra_sum = _sum_all_hra_from_text(text)
             if hra_sum and hra_sum != result.get("hra_received", 0):
-                print(f"[HRA_SUM] Overriding AI hra_received {result.get('hra_received')} → {hra_sum}")
+                print(f"[HRA_SUM] Overriding hra_received {result.get('hra_received')} → {hra_sum}")
                 result["hra_received"] = hra_sum
                 assumptions.append(f"HRA overridden by deterministic sum of all HRA rows = {hra_sum}")
+
+        # ── Gross from components fallback ───────────────────────────────────
+        # When the Gross Pay row shows only the monthly value (no YTD total row),
+        # compute gross as the sum of YTD earnings components already extracted.
+        if doc_type == "payslip":
+            component_sum = sum(result.get(f, 0) or 0 for f in [
+                'basic_salary', 'hra_received', 'special_allowance', 'lta',
+                'car_lease_allowance', 'uniform_allowance',
+            ])
+            gs = result.get('gross_salary', 0) or 0
+            if component_sum > 0 and (gs == 0 or gs < component_sum * 0.8):
+                result['gross_salary'] = component_sum
+                print(f"[EXTRACT_TEXT][payslip] gross_salary recomputed from components = {component_sum}")
+                assumptions.append(f"Gross salary derived from YTD component sum = {component_sum}")
+
+        # ── Annualize monthly payslip values ─────────────────────────────────
+        # Always store ANNUAL values in the sheet. If the payslip is monthly,
+        # multiply all salary fields by 12 here so every downstream consumer
+        # (sheet save, tax engine, ExtractionValidator) sees annual figures.
+        _PAYSLIP_ANNUAL_FIELDS = [
+            "gross_salary", "basic_salary", "hra_received", "tds_paid",
+            "pf_employee", "pf_employer", "professional_tax", "lta",
+            "special_allowance", "car_lease_allowance", "uniform_allowance",
+            "gratuity", "leave_encashment",
+        ]
+        if doc_type == "payslip" and not is_ytd:
+            for f in _PAYSLIP_ANNUAL_FIELDS:
+                if result.get(f, 0):
+                    result[f] = result[f] * 12
+            assumptions.insert(0, "Monthly payslip — all salary fields annualized (×12)")
+            result["_is_annualized"] = True
+        else:
+            assumptions.insert(0, "YTD/annual payslip — values already represent the full year")
+
+        # Mark this payslip's values as annual so validate_form16_payslip_consistency
+        # does not multiply them by 12 a second time.
+        if doc_type == "payslip":
+            result["_is_annual_payslip"] = True
 
         print(f"[EXTRACT_TEXT][{doc_type}] result: {result}")
 
@@ -1125,7 +1533,13 @@ def validate_form16_payslip_consistency(merged_data, extractions):
         except Exception:
             return 0.0
 
-    # Fields to check (these should be annual in Form 16, monthly in Payslip)
+    # Determine whether the payslip data is already annualized.
+    # Text fast-path (extract_from_text) and normalization_service (Vision path)
+    # both set _is_annual_payslip = True once annualization is done.
+    # If the flag is absent the values may still be monthly (older Vision extractions).
+    payslip_already_annual = bool(payslip_doc.get('_is_annual_payslip'))
+    print(f"[CONFLICT] payslip_already_annual={payslip_already_annual}")
+
     annual_fields = [
         ('gross_salary', 'Gross Salary'),
         ('basic_salary', 'Basic Salary'),
@@ -1139,59 +1553,58 @@ def validate_form16_payslip_consistency(merged_data, extractions):
         form16_val = _to_num(form16_doc.get(field_key))
         payslip_val = _to_num(payslip_doc.get(field_key))
 
-        # Skip if either is missing
         if form16_val == 0 or payslip_val == 0:
             continue
 
-        # Payslip is MONTHLY, Form 16 is ANNUAL
-        # Annualize payslip value for comparison
-        payslip_annualized = payslip_val * 12
+        # Use payslip value as-is if already annual, otherwise annualize for comparison
+        payslip_annual = payslip_val if payslip_already_annual else payslip_val * 12
 
-        # Check for significant variance
-        variance = abs(payslip_annualized - form16_val) / max(form16_val, payslip_annualized)
+        variance = abs(payslip_annual - form16_val) / max(form16_val, payslip_annual)
 
         if variance > tolerance:
-            # Large discrepancy detected
             conflict = {
                 "field": field_key,
                 "field_name": field_name,
                 "form16_value": form16_val,
                 "form16_source": "Form 16 (Annual)",
-                "payslip_monthly_value": payslip_val,
-                "payslip_annualized_value": round(payslip_annualized, 2),
+                "payslip_annual_value": round(payslip_annual, 2),
+                "payslip_already_annual": payslip_already_annual,
                 "variance_percent": round(variance * 100, 1),
                 "severity": "HIGH" if variance > 0.30 else "MEDIUM",
                 "recommended_value": form16_val,
-                "message": f"{field_name}: Form 16 = ₹{form16_val:,.0f} (annual), "
-                          f"Payslip = ₹{payslip_val:,.0f} (monthly, annualized = ₹{payslip_annualized:,.0f}). "
-                          f"Difference: {variance*100:.1f}%. Using Form 16 value."
+                "message": (
+                    f"{field_name}: Form 16 = ₹{form16_val:,.0f}, "
+                    f"Payslip = ₹{payslip_annual:,.0f} ({'annual' if payslip_already_annual else 'monthly×12'}). "
+                    f"Difference: {variance*100:.1f}%. Using Form 16 value."
+                )
             }
             conflicts.append(conflict)
             print(f"[CONFLICT][{field_key}] {conflict['message']}")
 
-    # Special handling for TDS (should be annual in Form 16, monthly in Payslip)
+    # TDS comparison
     form16_tds = _to_num(form16_doc.get('tds_paid'))
     payslip_tds = _to_num(payslip_doc.get('tds_paid'))
 
     if form16_tds > 0 and payslip_tds > 0:
-        payslip_tds_annual = payslip_tds * 12
+        payslip_tds_annual = payslip_tds if payslip_already_annual else payslip_tds * 12
         tds_variance = abs(payslip_tds_annual - form16_tds) / max(form16_tds, payslip_tds_annual)
 
-        if tds_variance > 0.25:  # 25% tolerance for TDS (wider due to monthly variations)
+        if tds_variance > 0.25:
             conflicts.append({
                 "field": "tds_paid",
                 "field_name": "TDS Paid",
                 "form16_value": form16_tds,
-                "payslip_monthly_value": payslip_tds,
-                "payslip_annualized_value": round(payslip_tds_annual, 2),
+                "payslip_annual_value": round(payslip_tds_annual, 2),
                 "variance_percent": round(tds_variance * 100, 1),
                 "severity": "MEDIUM",
                 "recommended_value": form16_tds,
-                "message": f"TDS: Form 16 = ₹{form16_tds:,.0f} (annual), "
-                          f"Payslip = ₹{payslip_tds:,.0f} (monthly). "
-                          f"Using Form 16 value."
+                "message": (
+                    f"TDS: Form 16 = ₹{form16_tds:,.0f}, "
+                    f"Payslip = ₹{payslip_tds_annual:,.0f}. "
+                    f"Difference: {tds_variance*100:.1f}%. Using Form 16 value."
+                )
             })
-            print(f"[CONFLICT][tds_paid] TDS variance detected: {tds_variance*100:.1f}%")
+            print(f"[CONFLICT][tds_paid] TDS variance: {tds_variance*100:.1f}%")
 
     # IMPORTANT: Form 16 values take PRIORITY - they're already in merged_data
     # The payslip was summed by merge_extractions, but we want Form 16 as primary
