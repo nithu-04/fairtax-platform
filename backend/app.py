@@ -295,6 +295,9 @@ def save_phase():
             # 🔥 CASE 3: normal update
             # CRITICAL: Protect extracted salary fields from being overwritten by new extractions
             else:
+                # row is an integer (row index) — fetch actual row data as dict
+                row_data = sheets_service.check_approval(submission_id) or {}
+
                 EXTRACTED_SALARY_FIELDS = {
                     'gross_salary', 'basic_salary', 'hra_received', 'tds_paid',
                     'pf_employee', 'pf_employer', 'professional_tax'
@@ -304,12 +307,12 @@ def save_phase():
                 # This prevents payslip monthly values from overwriting form16 annual values
                 update_data = dict(data)
                 for field in EXTRACTED_SALARY_FIELDS:
-                    sheet_has_value = row.get(field) is not None
+                    sheet_has_value = row_data.get(field) not in (None, '')
                     if sheet_has_value and data.get(field) is not None:
                         # Keep existing sheet value, don't let new extraction override
-                        print(f"[SAVE_PHASE_PROTECT] Keeping existing {field}={row[field]} "
+                        print(f"[SAVE_PHASE_PROTECT] Keeping existing {field}={row_data[field]} "
                               f"(new extraction tried: {data[field]})")
-                        update_data[field] = row[field]
+                        update_data[field] = row_data[field]
 
                 # 🔍 TRACE: Log what's being saved to database
                 print(f"\n[SAVE_PHASE_DB_WRITE_TRACE] Writing to database:")
@@ -318,7 +321,7 @@ def save_phase():
                 print(f"  hra_received: {update_data.get('hra_received')}")
                 print(f"  tds_paid: {update_data.get('tds_paid')}")
 
-                sheets_service.update_row(row, update_data)
+                sheets_service.update_row(row, update_data)  # row (int) stays here
 
         # [OK] HOOK: Update referral status if this user was referred
         # When a user saves their registration info (name + phone), check if they were referred
