@@ -784,7 +784,18 @@ def update_row(row, data):
     if ws is None:
         print("[SHEETS] Skipping update_row - Sheets unavailable")
         return
-    col_map = get_column_map()
+
+    # Ensure headers are in sync and get column map in single operation
+    try:
+        existing = _ws_call(ws, 'row_values', 1)
+        if existing != HEADERS:
+            _ws_call(ws, 'update', "A1", [HEADERS])
+            _ws_call(ws, 'format', "1:1", {"textFormat": {"bold": True},
+                                  "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 1.0}})
+        col_map = {col: idx+1 for idx, col in enumerate(HEADERS)}
+    except Exception as e:
+        print(f"[SHEETS] update_row header sync failed: {e}")
+        col_map = get_column_map()
     if col_map is None:
         print("[SHEETS] ERROR: update_row - Failed to get column map, skipping data save")
         return
