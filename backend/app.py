@@ -2594,6 +2594,7 @@ def save_referral():
 
     Request:
     - referrer_name: Name of person making referral (required)
+    - referrer_phone: Phone of person making referral (optional)
     - referral_name: Name of referred person (required)
     - referral_phone: Phone of referred person (required, 10 digits)
     - referral_index: Index 1-5 (optional, for logging)
@@ -2607,11 +2608,12 @@ def save_referral():
     try:
         data = request.get_json(force=True)
         referrer_name = (data.get('referrer_name') or '').strip()
+        referrer_phone = (data.get('referrer_phone') or '').strip()
         referral_name = (data.get('referral_name') or '').strip()
         referral_phone = (data.get('referral_phone') or '').strip()
         referral_index = data.get('referral_index', 0)
 
-        print(f"[SAVE_REFERRAL] Ref {referral_index}: {referrer_name} → {referral_name} ({referral_phone})")
+        print(f"[SAVE_REFERRAL] Ref {referral_index}: {referrer_name} ({referrer_phone}) → {referral_name} ({referral_phone})")
 
         # Validate required fields
         if not referrer_name:
@@ -2641,7 +2643,8 @@ def save_referral():
                 "referrals_sent",
                 "submission_found",
                 "last_notified",
-                "status"
+                "status",
+                "referrer_phone"
             ])
 
             # Append row with first 3 columns (others handled differently)
@@ -2652,7 +2655,8 @@ def save_referral():
                 "",                 # Column D: referrals_sent (empty, handled differently)
                 "",                 # Column E: submission_found (empty, handled differently)
                 "",                 # Column F: last_notified (empty, handled differently)
-                ""                  # Column G: status (empty, handled differently)
+                "",                 # Column G: status (empty, handled differently)
+                referrer_phone      # Column H: referrer_phone (at the end)
             ])
 
             print(f"[SAVE_REFERRAL] ✅ Saved: {referrer_name} → {referral_name}")
