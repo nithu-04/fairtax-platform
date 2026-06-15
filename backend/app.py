@@ -1562,20 +1562,49 @@ def _generate_and_upload_quote(submission_id, rec=None):
         print(f"[QUOTE_GEN] Deductions - 80C: {f('sec_80c')} | 80D: {f('sec_80d')} | 80CCD(1B): {f('sec_80ccd_1b')} | 80CCD(2): {f('sec_80ccd_2')}")
         print(f"[QUOTE_GEN] Total Deductions: {f('deductions_total')}")
 
-        # Build plans with variant refunds
-        plans = [
-            {"id": "A", "label": "Plan A — Safe",
-             "desc": "Conservative deductions, exact figures as filed. Lowest risk.",
-             "refund": f("variant_a_refund"), "regime": clean_regime(rec.get("variant_a_regime"))},
-            {"id": "B", "label": "Plan B — Optimized",
-             "desc": "Optimised LTA & allowance claims for a higher refund.",
+        # Build all 6 plans (3 OLD + 3 NEW)
+        all_plans = [
+            # OLD regime variants
+            {"id": "A_OLD", "label": "Plan A (OLD) — Conservative",
+             "desc": "Exact figures as declared. Zero risk, fully compliant.",
+             "refund": f("variant_a_refund"), "regime": "OLD"},
+            {"id": "B_OLD", "label": "Plan B (OLD) — Optimised",
+             "desc": "Optimised LTA & allowance claims for higher refund.",
              "refund": f("variant_b_refund"), "regime": "OLD"},
-            {"id": "C", "label": "Plan C — Maximum",
+            {"id": "C_OLD", "label": "Plan C (OLD) — Maximum",
              "desc": "Maximum legal deductions & allowances claimed.",
              "refund": f("variant_c_refund"), "regime": "OLD"},
+            # NEW regime variants
+            {"id": "A_NEW", "label": "Plan A (NEW) — Conservative",
+             "desc": "Exact figures as declared. Zero risk, fully compliant.",
+             "refund": f("variant_a_refund_new"), "regime": "NEW"},
+            {"id": "B_NEW", "label": "Plan B (NEW) — Optimised",
+             "desc": "Optimised Section 10 allowances for higher refund.",
+             "refund": f("variant_b_refund_new"), "regime": "NEW"},
+            {"id": "C_NEW", "label": "Plan C (NEW) — Maximum",
+             "desc": "Maximum legal deductions & allowances claimed.",
+             "refund": f("variant_c_refund_new"), "regime": "NEW"},
         ]
 
-        print(f"[QUOTE_GEN] Plan A Refund: {f('variant_a_refund')} ({clean_regime(rec.get('variant_a_regime'))}) | Plan B: {f('variant_b_refund')} (OLD) | Plan C: {f('variant_c_refund')} (OLD)")
+        # Separate by regime
+        old_plans = [p for p in all_plans if p["regime"] == "OLD"]
+        new_plans = [p for p in all_plans if p["regime"] == "NEW"]
+
+        # Find best refund for each regime
+        best_old_refund = max([p["refund"] for p in old_plans], default=0)
+        best_new_refund = max([p["refund"] for p in new_plans], default=0)
+
+        # Filter: show only the regime with better max refund
+        if best_old_refund >= best_new_refund:
+            plans = old_plans
+            best_regime = "OLD"
+            print(f"[QUOTE_GEN] ✓ OLD regime selected (max refund: {best_old_refund} vs NEW: {best_new_refund})")
+        else:
+            plans = new_plans
+            best_regime = "NEW"
+            print(f"[QUOTE_GEN] ✓ NEW regime selected (max refund: {best_new_refund} vs OLD: {best_old_refund})")
+
+        print(f"[QUOTE_GEN] Plans shown to taxpayer: {len(plans)} {best_regime} variants")
 
         # Derive PDF password from last 4 characters of PAN
         pdf_password = None
