@@ -1155,7 +1155,12 @@ def extract():
 # ---------- Serve uploads ----------
 @app.route("/uploads/<submission_id>/<filename>")
 def serve_upload(submission_id, filename):
-    folder = os.path.join(Config.UPLOAD_DIR, submission_id)
+    """Serve uploaded documents from persistent storage (Render Disk or Local)."""
+    import storage_service
+    # Use STORAGE_BASE to ensure consistency with save_file()
+    # On Render: STORAGE_BASE = /var/data
+    # Locally: STORAGE_BASE = backend/uploads
+    folder = os.path.join(storage_service.STORAGE_BASE, submission_id)
     return send_from_directory(folder, filename)
 
 
