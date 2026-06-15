@@ -105,7 +105,7 @@ def save_file(file_storage, submission_id, doc_type="document"):
                 return None
 
             url = f"{Config.PUBLIC_BASE_URL}/uploads/{submission_id}/{fname}"
-            print(f"[STORAGE] [{STORAGE_MODE}] ✓ Saved: {url}")
+            print(f"[STORAGE] [{STORAGE_MODE}] [OK] Saved: {url}")
             return url
 
         except Exception as e:
@@ -177,7 +177,7 @@ def save_pdf_to_gcs(pdf_content, submission_id, filename="quote.pdf"):
             print(f"[STORAGE] [{STORAGE_MODE}] [OK] PDF saved: {url}")
             return url
         except Exception as e:
-            print(f"[STORAGE] [PDF] ✗ Failed to save: {e}")
+            print(f"[STORAGE] [PDF] [FAIL] Failed to save: {e}")
             return None
 
 
