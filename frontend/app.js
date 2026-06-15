@@ -683,8 +683,10 @@ async function autoSaveReferral(index) {
   // Only for free filing
   if (filingType !== "free") return;
 
-  // Get referrer name (from auto-saved referrer details or form)
+  // Get referrer name and phone (from auto-saved referrer details or form)
   const referrerName = document.querySelector('[name="referrer_name"]')?.value?.trim() || "";
+  const referrerPhoneRaw = document.querySelector('[name="referrer_phone"]')?.value?.trim() || "";
+  const referrerPhone = _normalizePhone(referrerPhoneRaw);
 
   // Get referral name and phone
   const refName = document.querySelector(`[name="ref_name_${index}"]`)?.value?.trim() || "";
@@ -718,6 +720,7 @@ async function autoSaveReferral(index) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         referrer_name: referrerName,
+        referrer_phone: referrerPhone,
         referral_name: refName,
         referral_phone: refPhone,
         referral_index: index
