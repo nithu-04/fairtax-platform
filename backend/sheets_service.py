@@ -82,6 +82,9 @@ HEADERS = [
 
     # Combined results (formulas) - APPENDED AT END
     "regime_comparison", "quotes_comparison",
+
+    # Quote delivery tracking
+    "quote_sent", "quote_sent_at",
 ]
 
 def _client():

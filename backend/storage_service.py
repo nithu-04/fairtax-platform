@@ -84,10 +84,10 @@ def save_file(file_storage, submission_id, doc_type="document"):
                 expiration=timedelta(days=7),
                 method="GET"
             )
-            print(f"[STORAGE] [GCS] ✓ Saved: {url}")
+            print(f"[STORAGE] [GCS] [OK] Saved: {url}")
             return url
         except Exception as e:
-            print(f"[STORAGE] [GCS] ✗ Failed: {e}")
+            print(f"[STORAGE] [GCS] [FAIL] Failed: {e}")
             return None
 
     # STORAGE MODE 2: Render Persistent Disk or Local
@@ -152,16 +152,16 @@ def save_pdf_to_gcs(pdf_content, submission_id, filename="quote.pdf"):
                 pdf_content,
                 content_type="application/pdf"
             )
-            # Generate signed URL valid for 30 days
+            # Generate signed URL valid for 7 days (GCS max is 7 days, not 30)
             url = blob.generate_signed_url(
                 version="v4",
-                expiration=timedelta(days=30),
+                expiration=timedelta(days=7),
                 method="GET"
             )
-            print(f"[STORAGE] [GCS] ✓ PDF saved: {url}")
+            print(f"[STORAGE] [GCS] [OK] PDF saved: {url}")
             return url
         except Exception as e:
-            print(f"[STORAGE] [GCS] ✗ PDF upload failed: {e}")
+            print(f"[STORAGE] [GCS] [FAIL] PDF upload failed: {e}")
             return None
     else:
         # Fallback to local/Render disk
@@ -174,7 +174,7 @@ def save_pdf_to_gcs(pdf_content, submission_id, filename="quote.pdf"):
                 f.write(pdf_content)
 
             url = f"{Config.PUBLIC_BASE_URL}/api/download-quote/{submission_id}/{filename}"
-            print(f"[STORAGE] [{STORAGE_MODE}] ✓ PDF saved: {url}")
+            print(f"[STORAGE] [{STORAGE_MODE}] [OK] PDF saved: {url}")
             return url
         except Exception as e:
             print(f"[STORAGE] [PDF] ✗ Failed to save: {e}")
