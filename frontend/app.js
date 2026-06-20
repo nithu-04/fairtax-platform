@@ -1430,18 +1430,6 @@ $("#submit").onclick = async () => {
 
       currentStep = 7;
       showStep(7);
-
-      // ── OPEN WHATSAPP TO FAIRTAX ──────────────────────────────────────────
-      // Send notification to FairTax that user just submitted filing
-      try {
-        const waMessage = "Hey FairTax! 🎉 I just submitted my filing!";
-        const fairtaxWANumber = "919600165254"; // FairTax WhatsApp number
-        const waUrl = `https://wa.me/${fairtaxWANumber}?text=${encodeURIComponent(waMessage)}`;
-        console.log("[SUBMIT] Opening WhatsApp to FairTax");
-        window.open(waUrl, '_blank');
-      } catch (e) {
-        console.warn("[SUBMIT] Failed to open WhatsApp (non-blocking):", e.message);
-      }
     } else {
       alert("Error: " + j.error);
     }
