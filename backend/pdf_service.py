@@ -228,11 +228,11 @@ def generate_quote_pdf(data, filename="quote.pdf", password=None, return_bytes=F
 
     plan_meta = {
         'A_OLD': ('Plan A — Conservative', 'Exact figures as declared. Zero risk, fully compliant.'),
-        'B_OLD': ('Plan B — Optimised',    'Optimised LTA and allowance claims for higher refund.'),
-        'C_OLD': ('Plan C — Maximum',      'Maximum legal deductions and allowances claimed.'),
+        'B_OLD': ('Plan B — Optimised',    'Low risk'),
+        'C_OLD': ('Plan C — Maximum',      'Medium risk'),
         'A_NEW': ('Plan A — Conservative', 'Exact figures as declared. Zero risk, fully compliant.'),
-        'B_NEW': ('Plan B — Optimised',    'Optimised Section 10 allowances for higher refund.'),
-        'C_NEW': ('Plan C — Maximum',      'Maximum legal deductions and allowances claimed.'),
+        'B_NEW': ('Plan B — Optimised',    'Low risk'),
+        'C_NEW': ('Plan C — Maximum',      'Medium risk'),
     }
     # Color coding: OLD regime uses blue/purple/amber, NEW regime uses green variants
     plan_colors = {
