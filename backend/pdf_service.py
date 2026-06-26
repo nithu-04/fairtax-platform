@@ -240,7 +240,7 @@ def generate_quote_pdf(data, filename="quote.pdf", password=None, return_bytes=F
         'A_NEW': _GREEN, 'B_NEW': HexColor('#10b981'), 'C_NEW': HexColor('#34d399')
     }
 
-    prows = [['Plan', 'Strategy', 'Regime', 'Estimated Refund']]
+    prows = [['Plan', 'Strategy', 'Estimated Refund']]
     for p in plans:
         pid = p.get('id', '')
         lbl, desc = plan_meta.get(pid, (p.get('label', ''), p.get('desc', '')))
@@ -251,9 +251,9 @@ def generate_quote_pdf(data, filename="quote.pdf", password=None, return_bytes=F
         except (ValueError, TypeError):
             refund_val = 0
         refund = _inr(refund_val)
-        prows.append([lbl, desc, p.get('regime', ''), refund])
+        prows.append([lbl, desc, refund])
 
-    tp = Table(prows, colWidths=[150, 260, 70, 95])
+    tp = Table(prows, colWidths=[150, 260, 95])
     pcmds = _tbase(_DARK)
     for i, p in enumerate(plans, start=1):
         col = plan_colors.get(p.get('id', 'A'), _BLUE)
@@ -262,20 +262,7 @@ def generate_quote_pdf(data, filename="quote.pdf", password=None, return_bytes=F
     tp.setStyle(TableStyle(pcmds))
     content.extend([tp, sp(12)])
 
-    # ── 6. RECOMMENDATION ────────────────────────────────────────────────────
-    rec_lbl, _ = plan_meta.get(best_plan_id, (f'Plan {best_plan_id}', ''))
-    content.append(_banner([[P(f'OUR RECOMMENDATION: {rec_lbl}', 'rec_h')]], _GREEN))
-    content.append(_banner([[P(f'Regime: <b>{best_regime}</b>', 'rec_s')]], HexColor('#166534')))
-    content.append(_banner([[P('Detailed tax calculations are available to auditors in Google Sheets only.', 'small')]], _GREEN_LT))
-    notes = s('auditor_notes', '')
-    if notes and notes != '—':
-        content.append(_banner(
-            [[P(f'Expert Notes: {notes}', 'small')]],
-            _GREEN_LT
-        ))
-    content.append(sp(12))
-
-    # ── 7. FEE STRUCTURE ─────────────────────────────────────────────────────
+    # ── 6. FEE STRUCTURE ─────────────────────────────────────────────────────
     content.append(P('6.  FEE STRUCTURE', 'sec'))
     content.append(hr())
     frows = [
@@ -283,7 +270,6 @@ def generate_quote_pdf(data, filename="quote.pdf", password=None, return_bytes=F
         ['Expert ITR Filing Fee', _inr(fee)],
         ['50% Upfront — Pay now to begin filing', _inr(upfront)],
         ['50% Balance — Due after refund is credited', _inr(fee - upfront)],
-        ['Payment UPI / GPay ID', 'fairtaxadvisors@upi'],
     ]
     tf = Table(frows, colWidths=[400, 95])
     fcmds = _tbase(_AMBER)
