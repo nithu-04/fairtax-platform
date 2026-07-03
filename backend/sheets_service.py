@@ -789,12 +789,17 @@ def update_row(row, data):
     try:
         existing = _ws_call(ws, 'row_values', 1)
         if existing != HEADERS:
+            print(f"[SHEETS] update_row: Syncing headers (existing: {len(existing)}, expected: {len(HEADERS)})")
             _ws_call(ws, 'update', "A1", [HEADERS])
             _ws_call(ws, 'format', "1:1", {"textFormat": {"bold": True},
                                   "backgroundColor": {"red": 0.85, "green": 0.92, "blue": 1.0}})
+            print(f"[SHEETS] update_row: Headers synced")
         col_map = {col: idx+1 for idx, col in enumerate(HEADERS)}
+        print(f"[SHEETS] update_row: Built column map with {len(col_map)} columns")
     except Exception as e:
         print(f"[SHEETS] update_row header sync failed: {e}")
+        import traceback
+        traceback.print_exc()
         col_map = get_column_map()
     if col_map is None:
         print("[SHEETS] ERROR: update_row - Failed to get column map, skipping data save")
@@ -815,22 +820,32 @@ def update_row(row, data):
                 continue
             try:
                 # Add to batch instead of immediate update
+                col_num = col_map[k]
+                cell_ref = gspread.utils.rowcol_to_a1(row, col_num)
                 batch_updates.append({
-                    "range": gspread.utils.rowcol_to_a1(row, col_map[k]),
+                    "range": cell_ref,
                     "values": [[v]]
                 })
                 updated_fields.append(k)
+                if k == "quote_link":
+                    print(f"[SHEETS] update_row: Will update {k} in cell {cell_ref} (row {row}, col {col_num})")
             except Exception as e:
                 print(f"[SHEETS] Error preparing update for {k}: {e}")
         else:
             skipped_fields.append(f"{k}=not_in_col_map")
+            if k == "quote_link":
+                print(f"[SHEETS] WARNING: quote_link NOT in col_map! Available: {list(col_map.keys())[-10:]}")
 
     # BATCH UPDATE: Execute all collected updates in a single API call (optimization)
     if batch_updates:
         try:
+            print(f"[SHEETS] update_row: Executing batch update with {len(batch_updates)} updates")
             _ws_call(ws, 'batch_update', batch_updates, value_input_option="USER_ENTERED")
+            print(f"[SHEETS] update_row: Batch update completed successfully")
         except Exception as e:
             print(f"[SHEETS] Error executing batch update in update_row: {e}")
+            import traceback
+            traceback.print_exc()
 
     if updated_fields or skipped_fields:
         print(f"[SHEETS] update_row: Updated {len(updated_fields)} fields: {updated_fields[:5]}")

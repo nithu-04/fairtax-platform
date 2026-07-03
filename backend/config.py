@@ -29,9 +29,9 @@ class Config:
     MANYCHAT_API_TOKEN = os.getenv("MANYCHAT_API_TOKEN", "")
     MANYCHAT_PHONE_NUMBER = os.getenv("MANYCHAT_PHONE_NUMBER", "9600165254")
 
-    # UPLOAD_DIR: Local development only (for compatibility with legacy code)
-    # For production, storage_service.py uses RENDER_MOUNT_PATH and STORAGE_BASE
-    UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
+    # UPLOAD_DIR: Render persistent disk for production storage
+    # Files persist across restarts on Render's attached disk
+    UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/var/data/uploads")
 
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://fairtax-backend.onrender.com")
 
